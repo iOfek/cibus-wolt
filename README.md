@@ -19,13 +19,14 @@ npx cibus-wolt run          # actually drain (opens Chrome so you can watch)
 
 The wizard asks what kind of setup you want: just CLI, CLI + phone trigger, or CLI + Claude. Pick one based on the table below, then keep reading the matching section if you want detail.
 
-| You want to…                               | Pick                | Phone access | Needs Gmail? |
-|--------------------------------------------|---------------------|--------------|--------------|
-| Run it from my laptop, that's it           | **CLI-only**        | No           | No           |
-| Trigger it from my phone (web/cellular)    | **CLI + webhook**   | Yes          | No           |
-| Trigger from Claude app (desktop or web)   | **CLI + Claude**    | Yes          | No (Claude's Gmail integration covers it) |
+| You want to…                               | Pick                  | Phone access | Needs Gmail? |
+|--------------------------------------------|-----------------------|--------------|--------------|
+| Run it from my laptop, that's it           | **CLI-only**          | No           | No           |
+| Trigger it from my phone (web/cellular)    | **CLI + webhook**     | Yes          | No           |
+| Trigger from Claude app (desktop or web)   | **CLI + Claude**      | Yes          | No (Claude's Gmail integration covers it) |
+| Trigger from Microsoft 365 Copilot         | **CLI + M365 Copilot** | Yes         | No (Outlook/M365 mail covers it) |
 
-The three paths compose. You can have all of them on at once.
+All four paths compose. You can have all of them on at once.
 
 ## How it works
 
@@ -43,7 +44,7 @@ Two things occasionally need to be fed *into* the automation:
 - **Cibus SMS OTP** — 6-digit code SMS'd to your phone when Cibus forces re-auth. Arrives on the phone, we need it on the laptop.
 - **Wolt magic-link URL** — Wolt emails a login URL when session expires. Arrives as email, we need it opened inside our controlled browser.
 
-Four sources can supply them. First to respond wins; multiple can be active at once.
+Five sources can supply them. First to respond wins; multiple can be active at once.
 
 | Source | How it gets the signal | What you need |
 |---|---|---|
@@ -51,10 +52,11 @@ Four sources can supply them. First to respond wins; multiple can be active at o
 | **(b) Gmail OAuth** | Tool polls your Gmail for matching messages | Gmail account + one-time GCP project (OAuth client ID). For OTPs, your phone must forward Cibus SMS to Gmail (Android Tasker / iOS Shortcut). |
 | **(c) Phone webhook (ngrok)** | iOS Shortcut extracts OTP/URL and POSTs to our server | ngrok free signup + static domain + iOS Shortcut setup (2-min one-time each). Works from cellular. |
 | **(d) Claude MCP** | Claude's Gmail integration reads the Wolt email and calls `submit_magic_link`. For OTPs, you either type the 6 digits into the Claude chat manually OR set up an iOS Shortcut that forwards Cibus SMS to your Gmail so Claude can read it too. | Claude with Gmail connected. iOS Shortcut only if you want OTPs fully automatic. For claude.ai web, ngrok too. |
+| **(e) M365 Copilot MCP** | M365 Copilot reads the Wolt email from Outlook (which can mirror Gmail) and calls `submit_magic_link`. For OTPs, you either type the 6 digits in chat OR forward Cibus SMS into the same mailbox via iOS Shortcut. | Copilot Studio access on your tenant + ngrok. iOS Shortcut only if you want OTPs fully automatic. |
 
 **Why SMS vs email matters**: Cibus sends OTPs by SMS, which Claude and our Gmail poller can't read directly. Getting SMS OTPs into any automated path requires either an iOS Shortcut that forwards SMS elsewhere, or you just read the SMS off your phone and type/paste the digits manually.
 
-**Remote control** (trigger a drain from your phone / away from the laptop) requires either **(c)** or **(d)** — both give you a public URL. Local-only is **(a)** or **(b)**.
+**Remote control** (trigger a drain from your phone / away from the laptop) requires **(c)**, **(d)**, or **(e)** — all three give you a public URL. Local-only is **(a)** or **(b)**.
 
 ### Which should you pick?
 
@@ -63,6 +65,7 @@ Four sources can supply them. First to respond wins; multiple can be active at o
 | Use Claude + Gmail connected, OK typing OTPs in chat | **(d)**. Magic-links fully automatic via Claude's Gmail. OTP: type in chat (~10s per event). |
 | Use Claude + Gmail connected, want OTPs automated too | **(d)** + iOS Shortcut that forwards Cibus SMS to Gmail (subject `cibus-otp`). |
 | Use Claude but *no* Gmail (privacy / don't use Gmail) | **(c) + (d)**. Claude orchestrates; iOS Shortcuts forward both SMS and Wolt email to the ngrok webhook, which feeds Claude via the same input bus. |
+| Use M365 Copilot at work, Wolt mail visible in Outlook | **(e)**. Magic-links fully automatic via Copilot's Outlook reader. OTP: type in chat or forward SMS via iOS Shortcut. |
 | Have iPhone, don't use Claude, want remote trigger | **(c)**. iOS Shortcuts for both OTP SMS → webhook and Wolt mail → webhook. |
 | Have Gmail, don't use Claude, OK being at laptop | **(b)** + iOS Shortcut that forwards Cibus SMS to Gmail. Wolt mail already hits Gmail. |
 | Just run drains manually at the laptop | **(a)**. No setup, no signups. Type OTP and paste magic-link URL when prompted. |
@@ -190,6 +193,49 @@ In a chat, toggle on the connector, ask "start a dry drain." Claude:
 
 **SMS is the unskippable bit.** Cibus OTPs come by SMS, which no integration can read directly. Either you live with a short chat interruption when an OTP is needed, or you set up one iOS Shortcut (SMS → Gmail) once — see the section below.
 
+### IV. CLI + Microsoft 365 Copilot
+
+M365 Copilot orchestrates the drain via a Copilot Studio agent that wraps our MCP server. Copilot's built-in Outlook reader handles the **Wolt magic-link email** directly — useful if your Wolt account email is M365-native or your Gmail is mirrored into Outlook. The **Cibus OTP is an SMS**, which Copilot can't read; same fallbacks as path (d):
+
+- **Manual** — type the 6 digits in the Copilot chat when asked.
+- **iOS Shortcut → mailbox** — Shortcut forwards the Cibus SMS into the same Outlook-visible inbox; Copilot reads it and calls `submit_otp`.
+- **iOS Shortcut → webhook** — pair with path (c). The input bus delivers the OTP back to Copilot.
+
+**Setup:**
+
+```sh
+npx cibus-wolt copilot-setup
+# → wizard generates MCP_BEARER_TOKEN if missing
+# → runs ngrok stable-tunnel if not already configured
+# → installs launchd services (server + ngrok)
+# → prints the Server URL to paste into Copilot Studio
+```
+
+**Register in Copilot Studio:**
+
+1. Open https://copilotstudio.microsoft.com and sign in with your work account.
+2. Create an agent (or open an existing one) — name it `Cibus-Wolt`.
+3. **Tools** tab → **Add a tool** → **New tool** → **Model Context Protocol**.
+4. Fill in:
+   - **Server name:** `Cibus-Wolt`
+   - **Server description:** `Drains leftover Cibus weekly balance into Wolt gift cards. Tools: status, balance, last_runs, reset, start_drain, drain_status, submit_magic_link, submit_otp.`
+   - **Server URL:** the URL the wizard printed (`https://<your-ngrok-domain>/mcp/<token>`)
+   - **Authentication:** None — the bearer token is in the URL path.
+5. Click **Create**. The wizard probes the server and lists the 8 tools.
+6. Test in the agent's chat pane: ask `call the status tool`.
+7. **Channels** → **Microsoft 365 Copilot** → publish, so the agent shows up at https://m365.cloud.microsoft/chat. Tenant admin may need to enable agent installation for your account.
+
+**Triggering a drain from M365 Copilot:**
+
+In a chat at https://m365.cloud.microsoft/chat, mention or select the Cibus-Wolt agent and ask: `start a dry drain`. Copilot:
+
+1. Calls `start_drain({dry_run: true})` → pauses if Cibus needs OTP or Wolt needs magic-link
+2. For the Wolt magic-link: asks Copilot to find the latest Wolt `login link` email in your Outlook inbox → calls `submit_magic_link({url})`
+3. For Cibus OTP: you type the 6 digits in chat (or the iOS Shortcut feeds them in) → Copilot calls `submit_otp({code})`
+4. Polls `drain_status` until completed
+
+If you also have path (d) configured, Claude and M365 Copilot share the same MCP endpoint and bearer token — register the URL in both, no conflict.
+
 ## Gmail (optional)
 
 Used by paths (b) and (d) — our Gmail poller or Claude's Gmail integration reads the Wolt login email directly from your inbox. Skip if you're only using the webhook (c) or terminal (a) paths.
@@ -220,6 +266,7 @@ Without this, OTP delivery is manual: Claude will ask you for the 6 digits in ch
 ```
 cibus-wolt setup            Interactive first-time setup / edit existing values
 cibus-wolt claude-setup     Claude MCP only (skip webhook prompts)
+cibus-wolt copilot-setup    M365 Copilot setup (registers MCP endpoint via Copilot Studio)
 cibus-wolt stable-tunnel    Set up ngrok static domain
 cibus-wolt run [--dry-run] [--amount N]
                             Run a drain. --amount N spends exactly N ₪ (≤ available).

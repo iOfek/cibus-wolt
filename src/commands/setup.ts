@@ -209,7 +209,7 @@ async function setupClaudeDesktop(): Promise<void> {
   }
 }
 
-async function setupClaudeWeb(env: EnvMap): Promise<void> {
+async function prepareRemoteMcp(env: EnvMap, clientName: string): Promise<string | null> {
   const existingToken = env.MCP_BEARER_TOKEN;
   const keepToken = existingToken ? await askYesNo("  Keep existing MCP_BEARER_TOKEN?", true) : false;
   if (!keepToken) {
@@ -218,8 +218,8 @@ async function setupClaudeWeb(env: EnvMap): Promise<void> {
   }
   const token: string = env.MCP_BEARER_TOKEN ?? "";
   if (!token) {
-    console.log("  ⚠ No MCP token set — aborting Claude web setup.");
-    return;
+    console.log(`  ⚠ No MCP token set — aborting ${clientName} setup.`);
+    return null;
   }
 
   // Ensure the .env has the token persisted before services start
@@ -228,7 +228,7 @@ async function setupClaudeWeb(env: EnvMap): Promise<void> {
   currentEnv.MCP_BEARER_TOKEN = token;
   await writeEnvFile(envPath, currentEnv);
 
-  // Claude.ai needs a stable public URL — require ngrok domain
+  // Remote clients need a stable public URL — require ngrok domain
   await ensureNgrokDomain();
 
   // Ensure launchd services exist — otherwise there's no tunnel URL to show
@@ -243,7 +243,7 @@ async function setupClaudeWeb(env: EnvMap): Promise<void> {
 
   if (!servicesLoaded) {
     const doInstall = await askYesNo(
-      "  Launchd services (server + ngrok) not running. Install them now?\n  (Required to get a public URL for Claude.ai to reach.)",
+      `  Launchd services (server + ngrok) not running. Install them now?\n  (Required to get a public URL for ${clientName} to reach.)`,
       true,
     );
     if (doInstall) {
@@ -251,21 +251,18 @@ async function setupClaudeWeb(env: EnvMap): Promise<void> {
         execSync("npm run install-bg", { stdio: "inherit" });
       } catch {
         console.log("  install-bg failed. Retry later: `npm run install-bg`");
-        return;
+        return null;
       }
     } else {
       console.log("  Skipping — you can install the services later with `npm run install-bg`.");
-      return;
+      return null;
     }
-  } else {
-    // Token may have changed — bounce the services so the new value is picked up
-    if (!keepToken) {
-      console.log("  Restarting services to pick up the new token...");
-      try {
-        execSync("launchctl kickstart -k gui/$(id -u)/com.ofek.cibus-wolt.mcp", { stdio: "ignore" });
-      } catch {
-        /* best-effort */
-      }
+  } else if (!keepToken) {
+    console.log("  Restarting services to pick up the new token...");
+    try {
+      execSync("launchctl kickstart -k gui/$(id -u)/com.ofek.cibus-wolt.mcp", { stdio: "ignore" });
+    } catch {
+      /* best-effort */
     }
   }
 
@@ -273,8 +270,14 @@ async function setupClaudeWeb(env: EnvMap): Promise<void> {
   const fullUrl = await waitForTunnelUrl(token);
   if (!fullUrl) {
     console.log("  Timed out waiting for tunnel URL. Check with `npx cibus-wolt webhook-url`.");
-    return;
+    return null;
   }
+  return fullUrl;
+}
+
+async function setupClaudeWeb(env: EnvMap): Promise<void> {
+  const fullUrl = await prepareRemoteMcp(env, "Claude.ai");
+  if (!fullUrl) return;
 
   console.log("");
   hr();
@@ -306,6 +309,52 @@ async function setupClaudeWeb(env: EnvMap): Promise<void> {
   console.log("  Current URL anytime:  npx cibus-wolt webhook-url");
   console.log("");
   await ask("  Press Enter when you've registered the connector (or to skip)");
+}
+
+async function setupCopilotStudio(env: EnvMap): Promise<void> {
+  const fullUrl = await prepareRemoteMcp(env, "Copilot Studio");
+  if (!fullUrl) return;
+
+  console.log("");
+  hr();
+  console.log("  COPILOT STUDIO — register the MCP server in your agent:");
+  console.log("");
+  console.log(`    Server name:        Cibus-Wolt`);
+  console.log(`    Server description: Drains leftover Cibus weekly balance into Wolt gift cards.`);
+  console.log(`                        Tools: status, balance, last_runs, reset, start_drain,`);
+  console.log(`                        drain_status, submit_magic_link, submit_otp.`);
+  console.log(`    Server URL:         ${fullUrl}`);
+  console.log(`    Authentication:     None  (token is in the URL path)`);
+  console.log("");
+  hr();
+
+  const openBrowser = await askYesNo("Open Copilot Studio now?", true);
+  if (openBrowser) {
+    try {
+      spawn("open", ["https://copilotstudio.microsoft.com"], { detached: true, stdio: "ignore" }).unref();
+    } catch {
+      console.log("  (Couldn't auto-open. Visit: https://copilotstudio.microsoft.com)");
+    }
+  }
+
+  console.log("");
+  console.log("  Steps in Copilot Studio:");
+  console.log("    1. Sign in with your Microsoft work account.");
+  console.log("    2. Create an agent (or open an existing one) — name it 'Cibus-Wolt'.");
+  console.log("    3. Tools tab → Add a tool → New tool → Model Context Protocol.");
+  console.log("    4. Paste Server name, description, and URL above. Authentication: None.");
+  console.log("    5. Click Create. The wizard probes the server and lists the 8 tools.");
+  console.log("    6. Test in the agent's chat pane: ask 'call the status tool'.");
+  console.log("    7. Channels → Microsoft 365 Copilot → publish, so it shows up at");
+  console.log("       https://m365.cloud.microsoft/chat. Tenant admin may need to enable");
+  console.log("       agent installation for your account.");
+  console.log("");
+  console.log("  Wolt magic-link: ask the agent to find the latest Wolt 'login link' email");
+  console.log("    in your Outlook inbox and pass the URL to submit_magic_link.");
+  console.log("  Cibus OTP: SMS-only, same as Claude. Either type the 6 digits in chat,");
+  console.log("    or set up the iOS Shortcut that forwards SMS → Gmail (subject 'cibus-otp').");
+  console.log("");
+  await ask("  Press Enter when you've registered the agent (or to skip)");
 }
 
 async function waitForTunnelUrl(token: string): Promise<string | null> {
@@ -644,6 +693,30 @@ export async function runClaudeSetupCommand(): Promise<void> {
   }
 
   await stepClaude(env, "claude-only");
+  await writeEnvFile(envPath, env);
+  console.log(`  ✓ Saved to ${envPath}`);
+  printDone();
+}
+
+export async function runCopilotSetupCommand(): Promise<void> {
+  await ensureStateDir();
+  const envPath = path.join(paths.dir, ".env");
+  const env = await readEnvFile(envPath);
+
+  console.log("");
+  console.log("  cibus-wolt — Microsoft 365 Copilot setup");
+  console.log("  Configures an MCP endpoint registerable as a Copilot Studio agent");
+  console.log("  tool, so M365 Copilot can drive drains. If you haven't set");
+  console.log("  Cibus/Wolt credentials yet, run `cibus-wolt setup` first.");
+
+  if (!env.CIBUS_USER || !env.WOLT_EMAIL) {
+    console.log("");
+    console.log("  ⚠ Credentials are missing from ~/.cibus-wolt/.env. The MCP server");
+    console.log("  will still install, but won't work until you add them.");
+  }
+
+  title("Microsoft 365 Copilot via Copilot Studio");
+  await setupCopilotStudio(env);
   await writeEnvFile(envPath, env);
   console.log(`  ✓ Saved to ${envPath}`);
   printDone();
