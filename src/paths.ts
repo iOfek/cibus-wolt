@@ -25,6 +25,8 @@ export const paths = {
   screenshots: path.join(STATE_DIR, "screenshots"),
   migrationMarker: path.join(STATE_DIR, ".migrated-v1"),
   tunnelHostname: path.join(STATE_DIR, "tunnel-hostname"),
+  schedules: path.join(STATE_DIR, "schedules.json"),
+  missed: path.join(STATE_DIR, "missed.jsonl"),
 };
 
 interface MigrationStep {

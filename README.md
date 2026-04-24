@@ -133,19 +133,19 @@ By default the drain spends your full available balance. Pass `"amount": 50` to 
 **iOS Shortcut — Cibus OTP forwarder to webhook (~2 min):**
 
 1. iPhone Shortcuts app → **Automation** tab → **+** → **Message**.
-2. Filter: "Sender contains Pluxee" (or your phone's exact sender name for Cibus SMS).
-3. Action 1: **Get Text from Input** (text of the message).
-4. Action 2: **Match Text** with regex `\b\d{6}\b` → Matched Text.
-5. Action 3: **Get Contents of URL** — method POST, URL `https://<name>.ngrok-free.app/webhook/<token>/otp`, headers `Content-Type: application/json`, Request Body (JSON): `{"code": <Matched Text as Text>}`.
-6. Turn off "Run After Confirmation" so it fires silently.
+2. Filter: **Sender** is your Cibus SMS sender (e.g. Pluxee) **and** **Message** contains `קוד האימות`. That alone scopes it to OTP SMS — no regex needed.
+3. Action 1: **Get Numbers from Input** (returns the 6-digit code).
+4. Action 2: **Get Contents of URL** — method POST, URL `https://<name>.ngrok-free.app/webhook/<token>/otp`, headers `Content-Type: application/json`, Request Body (JSON): `{"code": <Numbers>}`.
+5. Turn off "Run After Confirmation" so it fires silently.
 
 **iOS Shortcut — Wolt magic-link forwarder:**
 
-1. Automation → **+** → **Email** → "Sender contains @wolt.com" + "Subject contains Log in to Wolt" (also catches Hebrew subject via sender filter).
-2. Action 1: **Get Details of Email** → Contents.
-3. Action 2: **Match Text** with regex `https:\/\/wolt\.com\/me\/magic_login\?[^\s"<>]+` → Matched Text.
-4. Action 3: **Get Contents of URL** — POST `https://<name>.ngrok-free.app/webhook/<token>/magic_link`, body `{"url": <Matched Text>}`.
-5. Save, turn off confirmation.
+1. Automation → **+** → **Email**.
+2. Filter: **Subject** contains `your login link` (add an OR clause with the Hebrew subject if you receive Wolt mail in Hebrew). Sender filter optional.
+3. Action 1: **Get Details of Email** → Contents.
+4. Action 2: **Get URLs from Input** (picks up the magic_login URL).
+5. Action 3: **Get Contents of URL** — POST `https://<name>.ngrok-free.app/webhook/<token>/magic_link`, body `{"url": <URLs>}`.
+6. Save, turn off confirmation.
 
 **Trigger a drain from your phone:** use Shortcuts → **+** → "Get Contents of URL" with POST to `.../webhook/<token>/drain`, body `{"dry_run": false}`. Put it on your home screen.
 
@@ -208,11 +208,10 @@ First run opens a browser for OAuth consent. Refresh token → `~/.cibus-wolt/to
 Needed for paths **(b)** and **(d)** if you want OTPs fully automatic. Cibus OTPs arrive as SMS, but the tool / Claude reads Gmail — so this Shortcut bridges them.
 
 1. Shortcuts → **Automation** → **+** → **Message**.
-2. Filter: "Sender contains Pluxee".
-3. Action 1: **Get Text from Input**.
-4. Action 2: **Match Text** with regex `\b\d{6}\b` → Matched Text.
-5. Action 3: **Send Email** — to your own Gmail, subject `cibus-otp`, body `@<Matched Text>` (or the full SMS body if you prefer — the parser handles both).
-6. Turn off "Run After Confirmation".
+2. Filter: **Sender** is your Cibus SMS sender (e.g. Pluxee) **and** **Message** contains `קוד האימות`.
+3. Action 1: **Get Numbers from Input**.
+4. Action 2: **Send Email** — to your own Gmail, subject `cibus-otp`, body `<Numbers>`.
+5. Turn off "Run After Confirmation".
 
 Without this, OTP delivery is manual: Claude will ask you for the 6 digits in chat, or the terminal will prompt you.
 

@@ -49,6 +49,7 @@ function showHelp(): void {
       "  stable-tunnel      Set up ngrok with a free static domain (stable URL).",
       "  setup              Interactive first-time setup wizard. Re-run to edit values.",
       "  claude-setup       Claude-MCP-only setup (skips phone webhook prompts).",
+      "  schedule <sub>     Manage recurring drain schedules (list|add|edit|remove|enable|disable|cadence).",
       "  help               Show this help.",
       "",
       "State lives at ~/.cibus-wolt/. Configure creds via .env in that directory or the project root.",
@@ -111,6 +112,11 @@ async function main(): Promise<void> {
     case "claude-setup": {
       const { runClaudeSetupCommand } = await import("../commands/setup.ts");
       await runClaudeSetupCommand();
+      break;
+    }
+    case "schedule": {
+      const { runScheduleCommand } = await import("../commands/schedule.ts");
+      await runScheduleCommand(args);
       break;
     }
     case "help":

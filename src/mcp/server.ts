@@ -25,6 +25,16 @@ import {
   setState,
   startRun,
 } from "./runRegistry.ts";
+import {
+  type Cadence,
+  describeSchedule,
+  findSchedule,
+  loadSchedulesState,
+  newSchedule,
+  saveSchedulesState,
+  validateScheduleInput,
+} from "../schedules.ts";
+import { nextFireTime, readMissed } from "../scheduler.ts";
 
 const USER_DATA_DIR = paths.chromeProfile;
 
@@ -207,7 +217,26 @@ export function createMcpServer(): McpServer {
       const wolt = await checkWoltSession();
       const lastRun = await getLastRun();
       const active = getActiveRun();
-      return textResult({ gmail, cibus, wolt, lastRun, activeRun: active });
+      const state = await loadSchedulesState();
+      const now = new Date();
+      const schedules = state.schedules.map((s) => ({
+        id: s.id.slice(0, 8),
+        description: describeSchedule(s, state.cadence),
+        enabled: s.enabled,
+        nextFire: s.enabled ? nextFireTime(s, state.cadence, now).toISOString() : null,
+        lastSuccessAt: s.lastSuccessAt ?? null,
+      }));
+      const missed = await readMissed(5);
+      return textResult({
+        gmail,
+        cibus,
+        wolt,
+        lastRun,
+        activeRun: active,
+        cadence: state.cadence,
+        schedules,
+        missed,
+      });
     },
   );
 
@@ -328,6 +357,149 @@ export function createMcpServer(): McpServer {
       if (!accepted) return errorResult("No run is currently waiting for an OTP.");
       await new Promise((r) => setTimeout(r, 1200));
       return textResult(getRunById(run_id) ?? { id: run_id });
+    },
+  );
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Schedule management
+  // ────────────────────────────────────────────────────────────────────────
+
+  server.registerTool(
+    "list_schedules",
+    {
+      description:
+        "List all recurring drain schedules with next-fire time + last-success + any recent missed periods. Schedules fire only while the background MCP service is running.",
+      inputSchema: {},
+    },
+    async () => {
+      const state = await loadSchedulesState();
+      const now = new Date();
+      const schedules = state.schedules.map((s) => ({
+        id: s.id,
+        name: s.name,
+        description: describeSchedule(s, state.cadence),
+        enabled: s.enabled,
+        dayOfWeek: s.dayOfWeek,
+        dayOfMonth: s.dayOfMonth,
+        time: s.time,
+        amount: s.amount ?? null,
+        nextFire: s.enabled ? nextFireTime(s, state.cadence, now).toISOString() : null,
+        lastFiredAt: s.lastFiredAt ?? null,
+        lastSuccessAt: s.lastSuccessAt ?? null,
+        lastMissedAt: s.lastMissedAt ?? null,
+      }));
+      const missed = await readMissed(10);
+      return textResult({ cadence: state.cadence, schedules, missed });
+    },
+  );
+
+  server.registerTool(
+    "set_cadence",
+    {
+      description:
+        "Set the Cibus reset cadence (weekly/monthly/daily). Determines how schedules repeat + catch-up boundaries. Default is weekly (most Israeli companies, Sun 00:00 reset).",
+      inputSchema: { cadence: z.enum(["weekly", "monthly", "daily"]) },
+    },
+    async ({ cadence }) => {
+      const state = await loadSchedulesState();
+      state.cadence = cadence as Cadence;
+      await saveSchedulesState(state);
+      return textResult({ cadence: state.cadence });
+    },
+  );
+
+  server.registerTool(
+    "add_schedule",
+    {
+      description:
+        "Create a recurring drain schedule. Weekly → provide day_of_week (0=Sun..6=Sat). Monthly → provide day_of_month (1-31 or -1 for last day). Daily → time only. Omit `amount` to drain the full available balance each fire; or pass an integer ₪ for a fixed partial drain.",
+      inputSchema: {
+        name: z.string().optional().describe("Optional human-readable label"),
+        day_of_week: z.number().int().min(0).max(6).optional().describe("0=Sun..6=Sat, for weekly cadence"),
+        day_of_month: z.number().int().min(-1).max(31).optional().describe("1..31 or -1 for last day, for monthly cadence"),
+        time: z.string().regex(/^\d{1,2}:\d{2}$/u).describe("HH:MM 24h in local time"),
+        amount: z.number().int().positive().optional().describe("₪ to spend; omit for full drain"),
+      },
+    },
+    async ({ name, day_of_week, day_of_month, time, amount }) => {
+      const state = await loadSchedulesState();
+      const input = { name, dayOfWeek: day_of_week, dayOfMonth: day_of_month, time, amount };
+      const err = validateScheduleInput(state.cadence, input);
+      if (err) return errorResult(err);
+      const s = newSchedule(input);
+      state.schedules.push(s);
+      await saveSchedulesState(state);
+      return textResult({ id: s.id, description: describeSchedule(s, state.cadence) });
+    },
+  );
+
+  server.registerTool(
+    "update_schedule",
+    {
+      description:
+        "Update fields of an existing schedule. All fields optional; only provided ones are changed. Set `amount` to null to clear (= full drain).",
+      inputSchema: {
+        id: z.string(),
+        name: z.string().optional(),
+        day_of_week: z.number().int().min(0).max(6).optional(),
+        day_of_month: z.number().int().min(-1).max(31).optional(),
+        time: z.string().regex(/^\d{1,2}:\d{2}$/u).optional(),
+        amount: z.number().int().positive().nullable().optional(),
+        enabled: z.boolean().optional(),
+      },
+    },
+    async ({ id, name, day_of_week, day_of_month, time, amount, enabled }) => {
+      const state = await loadSchedulesState();
+      const s = findSchedule(state, id);
+      if (!s) return errorResult(`No schedule matching "${id}"`);
+      if (name !== undefined) s.name = name;
+      if (day_of_week !== undefined) s.dayOfWeek = day_of_week;
+      if (day_of_month !== undefined) s.dayOfMonth = day_of_month;
+      if (time !== undefined) s.time = time;
+      if (amount !== undefined) s.amount = amount === null ? undefined : amount;
+      if (enabled !== undefined) s.enabled = enabled;
+      const err = validateScheduleInput(state.cadence, {
+        name: s.name,
+        dayOfWeek: s.dayOfWeek,
+        dayOfMonth: s.dayOfMonth,
+        time: s.time,
+        amount: s.amount,
+      });
+      if (err) return errorResult(err);
+      await saveSchedulesState(state);
+      return textResult({ id: s.id, description: describeSchedule(s, state.cadence) });
+    },
+  );
+
+  server.registerTool(
+    "remove_schedule",
+    {
+      description: "Delete a schedule by id.",
+      inputSchema: { id: z.string() },
+    },
+    async ({ id }) => {
+      const state = await loadSchedulesState();
+      const s = findSchedule(state, id);
+      if (!s) return errorResult(`No schedule matching "${id}"`);
+      state.schedules = state.schedules.filter((x) => x.id !== s.id);
+      await saveSchedulesState(state);
+      return textResult({ removed: s.id, description: describeSchedule(s, state.cadence) });
+    },
+  );
+
+  server.registerTool(
+    "set_schedule_enabled",
+    {
+      description: "Enable or disable a schedule without deleting it.",
+      inputSchema: { id: z.string(), enabled: z.boolean() },
+    },
+    async ({ id, enabled }) => {
+      const state = await loadSchedulesState();
+      const s = findSchedule(state, id);
+      if (!s) return errorResult(`No schedule matching "${id}"`);
+      s.enabled = enabled;
+      await saveSchedulesState(state);
+      return textResult({ id: s.id, enabled: s.enabled });
     },
   );
 

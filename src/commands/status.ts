@@ -8,6 +8,8 @@ import {
   getLastRun,
   type PhaseStatus,
 } from "../phases.ts";
+import { describeSchedule, loadSchedulesState } from "../schedules.ts";
+import { nextFireTime, readMissed } from "../scheduler.ts";
 
 interface Row {
   n: string;
@@ -77,5 +79,34 @@ export async function runStatusCommand(): Promise<void> {
   } else {
     // eslint-disable-next-line no-console
     console.log("Last run: (none yet — runs.jsonl empty or missing)");
+  }
+
+  const schedState = await loadSchedulesState();
+  // eslint-disable-next-line no-console
+  console.log("");
+  // eslint-disable-next-line no-console
+  console.log(`Schedules (${schedState.cadence}):`);
+  if (schedState.schedules.length === 0) {
+    // eslint-disable-next-line no-console
+    console.log("  (none — add with: cibus-wolt schedule add)");
+  } else {
+    const now = new Date();
+    for (const s of schedState.schedules) {
+      const next = s.enabled ? nextFireTime(s, schedState.cadence, now).toLocaleString() : "—";
+      // eslint-disable-next-line no-console
+      console.log(`  ${s.id.slice(0, 8)}  ${describeSchedule(s, schedState.cadence)}  next=${next}`);
+    }
+  }
+
+  const missed = await readMissed(5);
+  if (missed.length > 0) {
+    // eslint-disable-next-line no-console
+    console.log("");
+    // eslint-disable-next-line no-console
+    console.log("Recent missed periods:");
+    for (const m of missed) {
+      // eslint-disable-next-line no-console
+      console.log(`  ${m.ts}  ${m.scheduleName ?? m.scheduleId.slice(0, 8)}  period=${m.missedPeriodKey}  ${m.reason}`);
+    }
   }
 }

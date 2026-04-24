@@ -5,6 +5,7 @@ import path from "node:path";
 import { logger } from "../logger.ts";
 import { createMcpServer } from "../mcp/server.ts";
 import { ensureStateDir, paths } from "../paths.ts";
+import { startScheduler } from "../scheduler.ts";
 import { createWebhookRouter, loadOrCreateWebhookToken } from "../webhook.ts";
 
 const PORT = Number(process.env.MCP_PORT ?? 3737);
@@ -90,6 +91,10 @@ async function main() {
     logger.info(`  Webhook endpoints: /webhook/${webhookToken.slice(0, 4)}…/{drain|otp|magic_link|ack|status|url}`);
     logger.info(`Expose via: cloudflared tunnel --url http://127.0.0.1:${PORT}`);
   });
+
+  // Scheduler runs in-process: loads schedules.json, fires due drains on a 60s tick,
+  // catches up missed fires within the same Cibus period, notifies on full-period misses.
+  await startScheduler();
 }
 
 main().catch((e) => {

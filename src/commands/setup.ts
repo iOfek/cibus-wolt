@@ -486,9 +486,25 @@ export async function runSetupCommand(): Promise<void> {
 
   await writeEnvFile(envPath, env);
 
+  await stepSchedules();
   await stepWoltLogin();
   await stepSmokeTest();
   printDone();
+}
+
+async function stepSchedules(): Promise<void> {
+  title("Drain schedules (optional)");
+  console.log("  Recurring drains that fire automatically while the background service runs.");
+  console.log("  Pick a cadence matching your Cibus reset, add one or more schedules.");
+  console.log("  Can be edited later with: cibus-wolt schedule <sub>");
+  console.log("");
+  const proceed = await askYesNo("Configure schedules now?", true);
+  if (!proceed) {
+    console.log("  Skipped. Add later: cibus-wolt schedule add");
+    return;
+  }
+  const { runScheduleSetupStep } = await import("./schedule.ts");
+  await runScheduleSetupStep();
 }
 
 // ────────────────────────────────────────────────────────────────────────────
