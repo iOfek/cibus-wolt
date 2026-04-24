@@ -1,0 +1,27 @@
+node_modules/
+dist/
+
+# Secrets (.env is THE file with credentials; .env.example is safe to commit)
+.env
+.env.local
+*.local.env
+
+# Legacy state locations — current state lives in ~/.cibus-wolt/
+token.json
+user-data/
+user-data-cibus/
+screenshots/
+logs/
+runs.jsonl
+
+# Claude Code local settings + plans
+.claude/
+skills/
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.swp

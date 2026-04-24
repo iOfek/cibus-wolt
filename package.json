@@ -1,0 +1,54 @@
+{
+  "name": "cibus-wolt",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Drain leftover Cibus (Pluxee) weekly balance into a Wolt gift card on your own account before it expires.",
+  "keywords": ["cibus", "pluxee", "wolt", "israel", "meal-benefits"],
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "cibus-wolt": "src/bin/cibus-wolt.ts"
+  },
+  "files": [
+    "src/**/*.ts",
+    "src/**/*.sh",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node --import tsx/esm src/index.ts",
+    "cibus-wolt": "node --import tsx/esm src/bin/cibus-wolt.ts",
+    "auth": "node --import tsx/esm src/scripts/auth.ts",
+    "cibus": "node --import tsx/esm src/scripts/cibus.ts",
+    "gmail-test": "node --import tsx/esm src/scripts/gmail-test.ts",
+    "reset": "node --import tsx/esm src/scripts/reset.ts",
+    "status": "node --import tsx/esm src/scripts/status.ts",
+    "mcp": "node --import tsx/esm src/scripts/mcp.ts",
+    "mcp-stdio": "node --import tsx/esm src/scripts/mcp-stdio.ts",
+    "install-bg": "node --import tsx/esm src/scripts/install-bg.ts",
+    "uninstall-bg": "node --import tsx/esm src/scripts/uninstall-bg.ts",
+    "tunnel-url": "cat ~/.cibus-wolt/tunnel-hostname 2>/dev/null | sed 's|^|https://|' || echo 'No tunnel configured. Run: npx cibus-wolt stable-tunnel'",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "dotenv": "^16.4.5",
+    "express": "^5.2.1",
+    "google-auth-library": "^9.15.0",
+    "googleapis": "^144.0.0",
+    "pino": "^9.5.0",
+    "pino-pretty": "^13.0.0",
+    "playwright": "^1.49.0",
+    "tsx": "^4.19.2",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}
