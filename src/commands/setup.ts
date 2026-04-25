@@ -116,7 +116,6 @@ async function stepCredentials(env: EnvMap): Promise<void> {
     ["password", "otp"],
     (env.CIBUS_AUTH_MODE as "password" | "otp") || "password",
   );
-  env.WOLT_EMAIL = await ask("Wolt login email", env.WOLT_EMAIL);
   env.MIN_AMOUNT = await ask("Minimum balance to bother draining (₪)", env.MIN_AMOUNT || "10");
   env.MAX_SPEND = await ask("Max single-run spend (₪, sanity cap)", env.MAX_SPEND || "1200");
 }
@@ -520,8 +519,8 @@ async function ensureTunnel(): Promise<void> {
 
 async function stepGmail(env: EnvMap): Promise<void> {
   title("Gmail OAuth");
-  console.log("  Polls your Gmail for the Cibus OTP email (subject 'cibus-otp') and the");
-  console.log("  Wolt login email. Fully unattended local runs.");
+  console.log("  Polls your Gmail for the Cibus OTP email (subject 'cibus-otp', forwarded");
+  console.log("  by your iOS Shortcut). Fully unattended local OTP delivery.");
   console.log("");
   console.log("  One-time GCP project setup: https://console.cloud.google.com");
   console.log("  1) New project → enable Gmail API");
@@ -631,11 +630,6 @@ async function runGmailOtpTest(env: EnvMap, auth: import("google-auth-library").
 
 async function stepWoltLogin(env: EnvMap): Promise<void> {
   title("Wolt login");
-  if (!env.WOLT_EMAIL) {
-    console.log("  Skipping — WOLT_EMAIL missing from .env.");
-    return;
-  }
-
   console.log("  Wolt's bot detection rejects automated email submission, so we hand the");
   console.log("  browser to you for one manual login. The session cookie is saved to the");
   console.log("  Chrome profile and reused on every subsequent drain (auto-refreshed each");
@@ -667,7 +661,7 @@ async function runWoltLoginTest(env: EnvMap): Promise<boolean> {
     const browser = await acquireBrowser();
     try {
       const page = browser.context.pages()[0] ?? (await browser.context.newPage());
-      await ensureWoltLoggedIn({ page, email: env.WOLT_EMAIL! });
+      await ensureWoltLoggedIn({ page });
       console.log(`  ✓ Wolt session saved at ${paths.chromeProfile}`);
       return true;
     } finally {
@@ -919,9 +913,9 @@ export async function runClaudeSetupCommand(): Promise<void> {
   console.log("  This configures only the Claude MCP connector. If you haven't");
   console.log("  set Cibus/Wolt credentials yet, run `cibus-wolt setup` first.");
 
-  if (!env.CIBUS_USER || !env.WOLT_EMAIL) {
+  if (!env.CIBUS_USER) {
     console.log("");
-    console.log("  ⚠ Credentials are missing from ~/.cibus-wolt/.env. The MCP server");
+    console.log("  ⚠ Cibus credentials are missing from ~/.cibus-wolt/.env. The MCP server");
     console.log("  will still install, but won't work until you add them.");
   }
 

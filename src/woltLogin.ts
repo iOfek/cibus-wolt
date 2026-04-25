@@ -8,15 +8,14 @@ import { dismissWoltOverlays } from "./woltOverlays.ts";
 
 export interface WoltLoginOpts {
   page: Page;
-  email: string;
-  /** Required unless fetchMagicLink is provided (used for Gmail-polling magic-link fetch). */
+  /** Reserved for the (currently inactive) magic-link helpers. */
   auth?: OAuth2Client;
-  /** Override to provide a magic link from an external source (e.g. MCP pause/resume). */
+  /** Reserved for the (currently inactive) magic-link helpers. */
   fetchMagicLink?: () => Promise<string>;
 }
 
 export async function ensureWoltLoggedIn(opts: WoltLoginOpts): Promise<void> {
-  const { page, email } = opts;
+  const { page } = opts;
 
   // Fast path: profile already has a valid Wolt session cookie. This is the
   // analog of gmail.tryLoadAuthClient — checks cached credentials without any
@@ -41,7 +40,7 @@ export async function ensureWoltLoggedIn(opts: WoltLoginOpts): Promise<void> {
   // on fresh profiles, so we hand the browser to the user. The auto-fill +
   // magic-link-poll helpers below (fillEmailAndSubmit, fetchWoltMagicLink,
   // clickConfirmBrowserButton) are kept for future re-enablement.
-  logger.info(`👉 Please log in to Wolt manually in the visible browser (account: ${email}).`);
+  logger.info("👉 Please log in to Wolt manually in the visible browser.");
   logger.info("   When you're logged in, come back to this terminal and press Enter.");
   await waitForEnter("   Press Enter once Wolt shows you logged in: ");
 

@@ -8,7 +8,7 @@ async function main() {
   const url = await fetchWoltMagicLink({
     auth,
     since: new Date(Date.now() - 5 * 60_000),
-    expectEmail: config.wolt.email,
+    expectEmail: process.env.WOLT_EMAIL ?? "",
     timeoutMs: 3 * 60_000,
     pollMs: 5_000,
   });

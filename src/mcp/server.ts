@@ -160,12 +160,7 @@ async function runDrainBackground(runId: string, dryRun: boolean, requestedAmoun
     const screenshotDir = screenshotDirFor(`mcp-${runId.slice(0, 8)}`);
 
     try {
-      await ensureWoltLoggedIn({
-        page,
-        email: config.wolt.email,
-        auth: auth ?? undefined,
-        fetchMagicLink: () => resolveMagicLink(10 * 60_000, { auth: auth ?? undefined, expectEmail: config.wolt.email, allowStdin: false }),
-      });
+      await ensureWoltLoggedIn({ page });
       const result = await buyAndRedeemWoltGiftCard({
         page,
         context,

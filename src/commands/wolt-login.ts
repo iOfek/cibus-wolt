@@ -1,5 +1,4 @@
 /* eslint-disable no-console */
-import { config } from "../config.ts";
 import { paths } from "../paths.ts";
 import { logger } from "../logger.ts";
 
@@ -12,10 +11,7 @@ import { logger } from "../logger.ts";
  * every subsequent drain — `run` refreshes the expiry on each invocation.
  */
 export async function runWoltLoginCommand(): Promise<void> {
-  const email = config.wolt.email;
-
   console.log("Opening Chrome to Wolt's login page. Sign in manually, then come back here.");
-  console.log(`Account: ${email}`);
   console.log(`Profile: ${paths.chromeProfile}`);
   console.log("");
 
@@ -24,7 +20,7 @@ export async function runWoltLoginCommand(): Promise<void> {
   const browser = await acquireBrowser();
   try {
     const page = browser.context.pages()[0] ?? (await browser.context.newPage());
-    await ensureWoltLoggedIn({ page, email });
+    await ensureWoltLoggedIn({ page });
     console.log("");
     console.log(`  ✓ Wolt session saved to ${paths.chromeProfile}`);
     console.log("  Subsequent `cibus-wolt run` calls will reuse this session and silently refresh it.");

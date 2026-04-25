@@ -128,12 +128,7 @@ export async function runDrainCommand(opts: DrainOpts = {}): Promise<void> {
   const screenshotDir = screenshotDirFor("run");
 
   try {
-    await ensureWoltLoggedIn({
-      page,
-      email: config.wolt.email,
-      auth,
-      fetchMagicLink: () => resolveMagicLink(10 * 60_000, { auth, expectEmail: config.wolt.email, allowStdin: true }),
-    });
+    await ensureWoltLoggedIn({ page });
     const result = await buyAndRedeemWoltGiftCard({
       page,
       context,

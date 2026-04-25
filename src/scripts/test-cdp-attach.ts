@@ -50,8 +50,9 @@ async function main() {
     console.error("✗ Chrome not found. Install Google Chrome and re-run.");
     process.exit(1);
   }
-  if (!config.wolt.email) {
-    console.error("✗ WOLT_EMAIL missing from .env.");
+  const woltEmail = process.env.WOLT_EMAIL;
+  if (!woltEmail) {
+    console.error("✗ WOLT_EMAIL must be set in the environment for this diagnostic script.");
     process.exit(1);
   }
   if (!config.google.clientId || !config.google.clientSecret) {
@@ -118,7 +119,7 @@ async function main() {
     await emailField.waitFor({ state: "visible", timeout: 10_000 });
     await emailField.click();
     await emailField.fill("");
-    await emailField.pressSequentially(config.wolt.email, { delay: 30 });
+    await emailField.pressSequentially(woltEmail, { delay: 30 });
     await page.waitForTimeout(800);
 
     const continueBtn = page.locator('button[data-test-id="StepMethodSelect.NextButton"]').first();
@@ -135,7 +136,7 @@ async function main() {
       const url = await fetchWoltMagicLink({
         auth,
         since: new Date(sentAt.getTime() - 30_000),
-        expectEmail: config.wolt.email,
+        expectEmail: woltEmail,
         timeoutMs: 60_000,
         pollMs: 5_000,
       });

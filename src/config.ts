@@ -35,9 +35,6 @@ export const config = {
     company: required("CIBUS_COMPANY"),
     authMode: authMode as "password" | "otp",
   },
-  wolt: {
-    email: required("WOLT_EMAIL"),
-  },
   google: {
     clientId: process.env.GOOGLE_CLIENT_ID ?? "",
     clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
