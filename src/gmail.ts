@@ -141,13 +141,16 @@ export interface FindMagicLinkOpts {
 }
 
 export async function fetchWoltMagicLink(opts: FindMagicLinkOpts): Promise<string> {
-  const { auth, expectEmail, timeoutMs = 90_000, pollMs = 3_000 } = opts;
+  const { auth, expectEmail, since, timeoutMs = 90_000, pollMs = 3_000 } = opts;
   const gmail = google.gmail({ version: "v1", auth });
-  const query = `from:wolt newer_than:1d`;
+  // Gmail's `after:` operator takes a Unix-second timestamp and is required to
+  // avoid picking up stale magic-link emails from prior runs on other devices.
+  const sinceSec = since ? Math.floor(since.getTime() / 1000) : undefined;
+  const query = sinceSec ? `from:wolt newer_than:1d after:${sinceSec}` : `from:wolt newer_than:1d`;
   const deadline = Date.now() + timeoutMs;
   const seen = new Set<string>();
 
-  logger.info({ query }, "Polling Gmail for Wolt magic-link email (latest wins)");
+  logger.info({ query, since: since?.toISOString() }, "Polling Gmail for Wolt magic-link email (latest wins)");
 
   while (Date.now() < deadline) {
     try {
@@ -165,6 +168,14 @@ export async function fetchWoltMagicLink(opts: FindMagicLinkOpts): Promise<strin
         const internalDate = Number(full.data.internalDate ?? 0);
         const ageMin = Math.round((Date.now() - internalDate) / 60_000);
         logger.info({ id: m.id, subject, from, ageMin }, "Gmail message candidate");
+
+        if (since && internalDate < since.getTime()) {
+          logger.info(
+            { id: m.id, subject, ageMin, sinceISO: since.toISOString() },
+            "Skipping stale Gmail message (older than `since`)",
+          );
+          continue;
+        }
 
         const url = extractMagicUrl(full.data);
         if (!url) {

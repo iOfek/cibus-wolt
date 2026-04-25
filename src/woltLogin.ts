@@ -41,6 +41,11 @@ export async function ensureWoltLoggedIn(opts: WoltLoginOpts): Promise<void> {
     logger.warn("👉 Auto-fill failed (selectors may be stale). Enter email + click Continue in the visible browser.");
     logger.warn(`   Expected email: ${email}`);
   }
+  // Diagnostic pause: holds the page open for 10s so the user can inspect what
+  // Wolt actually showed (success toast vs. automation warning vs. captcha)
+  // before we start polling for the magic-link email.
+  logger.info("⏸  Pausing 10s so you can inspect the page after email submit (look for: 'check your email' toast, captcha, or any error)...");
+  await page.waitForTimeout(10_000);
   logger.info("   Awaiting magic-link delivery (Gmail / webhook / MCP / stdin) — up to 10 minutes.");
 
   let magicUrl: string;
