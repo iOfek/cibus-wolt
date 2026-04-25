@@ -38,21 +38,20 @@ Under the hood, one `cibus-wolt run`:
 
 ## Why the extra setup options?
 
-Two things occasionally need to be fed *into* the automation:
+The only thing the automation can't get on its own is the **Cibus SMS OTP** — a 6-digit code SMS'd to your phone when Cibus forces re-auth. Arrives on the phone, we need it on the laptop.
 
-- **Cibus SMS OTP** — 6-digit code SMS'd to your phone when Cibus forces re-auth. Arrives on the phone, we need it on the laptop.
-- **Wolt magic-link URL** — Wolt emails a login URL when session expires. Arrives as email, we need it opened inside our controlled browser.
+(Wolt login is one-time manual: `cibus-wolt wolt-login` opens Chrome to the Wolt login page, you sign in once, the session cookie is saved to the dedicated profile, and every subsequent drain silently refreshes its expiry. No magic-link plumbing — Wolt's bot detection rejected it on fresh profiles anyway.)
 
-Four sources can supply them. First to respond wins; multiple can be active at once.
+Four sources can deliver the Cibus OTP. First to respond wins; multiple can be active at once.
 
 | Source | How it gets the signal | What you need |
 |---|---|---|
-| **(a) Terminal prompt** | You type/paste it when prompted | Nothing. Only works if you're at the laptop during the drain. |
-| **(b) Gmail OAuth** | Tool polls your Gmail for matching messages | Gmail account + one-time GCP project (OAuth client ID). For OTPs, your phone must forward Cibus SMS to Gmail (Android Tasker / iOS Shortcut). |
-| **(c) Phone webhook (ngrok)** | iOS Shortcut extracts OTP/URL and POSTs to our server | ngrok free signup + static domain + iOS Shortcut setup (2-min one-time each). Works from cellular. |
-| **(d) Claude MCP** | Claude's Gmail integration reads the Wolt email and calls `submit_magic_link`. For OTPs, you either type the 6 digits into the Claude chat manually OR set up an iOS Shortcut that forwards Cibus SMS to your Gmail so Claude can read it too. | Claude with Gmail connected. iOS Shortcut only if you want OTPs fully automatic. For claude.ai web, ngrok too. |
+| **(a) Terminal prompt** | You type the 6 digits when prompted | Nothing. Only works if you're at the laptop during the drain. |
+| **(b) Gmail OAuth** | Tool polls your Gmail for a forwarded SMS (subject `cibus-otp`) | Gmail account + one-time GCP project (OAuth client ID) + iOS Shortcut that emails the SMS to your own Gmail. |
+| **(c) Phone webhook (ngrok)** | iOS Shortcut extracts the 6 digits and POSTs to our server | ngrok free signup + static domain + iOS Shortcut (2-min one-time each). Works from cellular. |
+| **(d) Claude MCP** | You type the 6 digits in chat (Claude calls `submit_otp`), OR an iOS Shortcut forwards SMS to your Gmail and Claude's Gmail integration reads it | Claude. iOS Shortcut only if you want OTPs fully automatic. For claude.ai web, ngrok too. |
 
-**Why SMS vs email matters**: Cibus sends OTPs by SMS, which Claude and our Gmail poller can't read directly. Getting SMS OTPs into any automated path requires either an iOS Shortcut that forwards SMS elsewhere, or you just read the SMS off your phone and type/paste the digits manually.
+**Why this needs forwarding at all**: Cibus OTPs come by SMS. Neither Claude nor our Gmail poller can read SMS directly. Either you type the 6 digits manually when asked, or you set up one iOS Shortcut that forwards the SMS to a place an integration can read (Gmail or our webhook).
 
 **Remote control** (trigger a drain from your phone / away from the laptop) requires **(c)** or **(d)** — both give you a public URL. Local-only is **(a)** or **(b)**.
 
@@ -60,12 +59,12 @@ Four sources can supply them. First to respond wins; multiple can be active at o
 
 | Your situation | Recommended |
 |---|---|
-| Use Claude + Gmail connected, OK typing OTPs in chat | **(d)**. Magic-links fully automatic via Claude's Gmail. OTP: type in chat (~10s per event). |
-| Use Claude + Gmail connected, want OTPs automated too | **(d)** + iOS Shortcut that forwards Cibus SMS to Gmail (subject `cibus-otp`). |
-| Use Claude but *no* Gmail (privacy / don't use Gmail) | **(c) + (d)**. Claude orchestrates; iOS Shortcuts forward both SMS and Wolt email to the ngrok webhook, which feeds Claude via the same input bus. |
-| Have iPhone, don't use Claude, want remote trigger | **(c)**. iOS Shortcuts for both OTP SMS → webhook and Wolt mail → webhook. |
-| Have Gmail, don't use Claude, OK being at laptop | **(b)** + iOS Shortcut that forwards Cibus SMS to Gmail. Wolt mail already hits Gmail. |
-| Just run drains manually at the laptop | **(a)**. No setup, no signups. Type OTP and paste magic-link URL when prompted. |
+| Use Claude, OK typing OTP in chat | **(d)**. ~10s in chat when Cibus needs MFA. |
+| Use Claude + Gmail, want OTP automated too | **(d)** + iOS Shortcut that forwards Cibus SMS to Gmail (subject `cibus-otp`). |
+| Use Claude but no Gmail (privacy / don't use Gmail) | **(c) + (d)**. Claude orchestrates; iOS Shortcut forwards SMS to the ngrok webhook. |
+| Have iPhone, don't use Claude, want remote trigger | **(c)**. iOS Shortcut for OTP SMS → webhook. |
+| Have Gmail, don't use Claude, OK being at laptop | **(b)** + iOS Shortcut that forwards Cibus SMS to Gmail. |
+| Just run drains manually at the laptop | **(a)**. No signups. Type OTP when prompted. |
 
 `npx cibus-wolt setup` asks these questions up front, detects what's already configured, and recommends a path. You can pick a different combination or run the wizard again to add another path later.
 
@@ -98,7 +97,7 @@ npx cibus-wolt setup
 npx cibus-wolt run
 ```
 
-When Cibus asks for an SMS OTP (first login / rarely after that if "זכור" was ticked), you type the 6-digit code in the terminal. When Wolt's session expires (every few weeks), you paste the magic-link URL from your email into the terminal.
+When Cibus asks for an SMS OTP (first login / rarely after that if "זכור" was ticked), you type the 6-digit code in the terminal. When Wolt's session expires (every few weeks), run `npx cibus-wolt wolt-login` and sign in manually — the new session is reused on every subsequent drain.
 
 **That's the whole install.** No services, no tunnel, no signups.
 
@@ -139,9 +138,8 @@ Stable URL across reboots, same `/webhook/<token>/...` and `/mcp/<token>` endpoi
 After that, `npx cibus-wolt webhook-url` prints your three stable URLs:
 
 ```
-POST https://<name>.ngrok-free.app/webhook/<token>/drain       body: {"dry_run"?: boolean, "amount"?: number}
-POST https://<name>.ngrok-free.app/webhook/<token>/otp         body: {"code": "123456"}
-POST https://<name>.ngrok-free.app/webhook/<token>/magic_link  body: {"url": "https://wolt.com/me/magic_login?..."}
+POST https://<name>.ngrok-free.app/webhook/<token>/drain  body: {"dry_run"?: boolean, "amount"?: number}
+POST https://<name>.ngrok-free.app/webhook/<token>/otp    body: {"code": "123456"}
 ```
 
 By default the drain spends your full available balance. Pass `"amount": 50` to spend exactly 50 ₪ (must be ≤ available).
@@ -153,28 +151,19 @@ By default the drain spends your full available balance. Pass `"amount": 50` to 
 3. Action: **Get Contents of URL** — method POST, URL `https://<name>.ngrok-free.app/webhook/<token>/otp`, headers `Content-Type: application/json`, Request Body (JSON): `{"code": <Message>}`. The server extracts the 6-digit code from the raw SMS text.
 4. Turn off "Run After Confirmation" so it fires silently.
 
-**iOS Shortcut — Wolt magic-link forwarder:**
-
-1. Automation → **+** → **Email**.
-2. Filter: **Subject** contains `your login link` (add an OR clause with the Hebrew subject if you receive Wolt mail in Hebrew). Sender filter optional.
-3. Action 1: **Get Details of Email** → Contents.
-4. Action 2: **Get URLs from Input** (picks up the magic_login URL).
-5. Action 3: **Get Contents of URL** — POST `https://<name>.ngrok-free.app/webhook/<token>/magic_link`, body `{"url": <URLs>}`.
-6. Save, turn off confirmation.
-
 **Trigger a drain from your phone:** use Shortcuts → **+** → "Get Contents of URL" with POST to `.../webhook/<token>/drain`, body `{"dry_run": false}`. Put it on your home screen.
 
 Android: Tasker's HTTP Request task does the same thing — same URLs, same JSON bodies.
 
 ### III. CLI + Claude
 
-Claude orchestrates the drain and reads the **Wolt magic-link email** directly via its Gmail integration (if you have it connected). The **Cibus OTP is an SMS**, which Claude cannot read — so OTP delivery is either:
+Claude orchestrates the drain. Wolt is already logged in (one-time `cibus-wolt wolt-login`); Claude doesn't need to touch it. The only thing Claude needs help with is the **Cibus SMS OTP**, which it can't read directly. OTP delivery is either:
 
 - **Manual** — Claude asks, you read the SMS off your phone and type the 6 digits in the chat.
 - **iOS Shortcut → Gmail** — Shortcut forwards the Cibus SMS to your Gmail with subject `cibus-otp`; Claude's Gmail integration reads it and submits automatically. See the [Cibus SMS → Gmail Shortcut](#ios-shortcut--forward-cibus-sms-to-gmail) below.
-- **iOS Shortcut → webhook** — if you'd rather not give Claude Gmail access (or don't use Gmail), set up the phone webhook too (path II) alongside Claude. Shortcut POSTs SMS + Wolt mail to ngrok; the tool's input bus feeds them back to Claude. In this case no Gmail access is needed from anyone.
+- **iOS Shortcut → webhook** — if you'd rather not give Claude Gmail access, set up the phone webhook too (path II) alongside Claude. Shortcut POSTs the SMS to ngrok; the tool's input bus feeds it back to Claude.
 
-Whichever of the three fires first wins. You can compose them.
+Whichever fires first wins. You can compose them.
 
 **Claude Desktop (simplest):**
 
@@ -184,7 +173,7 @@ npx cibus-wolt claude-setup
 # → wizard offers to auto-merge cibus-wolt into claude_desktop_config.json
 ```
 
-Restart Claude Desktop. In a chat, toggle on Cibus-Wolt under the Tools menu. Ask: "call status". Then: "start a dry drain" — Claude drives the flow, reads the Wolt email from Gmail, and waits for the OTP (asks you, or picks it up from Gmail/webhook).
+Restart Claude Desktop. In a chat, toggle on Cibus-Wolt under the Tools menu. Ask: "call status". Then: "start a dry drain" — Claude drives the flow and waits for the Cibus OTP (asks you, or picks it up from Gmail/webhook).
 
 **Claude.ai web + mobile:**
 
@@ -199,15 +188,14 @@ Register the printed URL at `claude.ai → Settings → Connectors → Add custo
 
 In a chat, toggle on the connector, ask "start a dry drain." Claude:
 1. Calls `start_drain({dry_run: true})` → pauses if Cibus needs OTP
-2. For the Wolt magic-link (email): uses its Gmail integration to fetch the login email → calls `submit_magic_link`
-3. For Cibus OTP (SMS): Claude *cannot* read SMS. Either you type the 6 digits in chat (Claude calls `submit_otp` with what you provided), OR — if you set up the SMS → Gmail Shortcut — Claude reads the `cibus-otp` email and submits automatically
-4. Polls `drain_status` until completed
+2. For Cibus OTP (SMS): Claude *cannot* read SMS. Either you type the 6 digits in chat (Claude calls `submit_otp` with what you provided), OR — if you set up the SMS → Gmail Shortcut — Claude reads the `cibus-otp` email and submits automatically
+3. Polls `drain_status` until completed
 
 **SMS is the unskippable bit.** Cibus OTPs come by SMS, which no integration can read directly. Either you live with a short chat interruption when an OTP is needed, or you set up one iOS Shortcut (SMS → Gmail) once — see the section below.
 
 ## Gmail (optional)
 
-Used by paths (b) and (d) — our Gmail poller or Claude's Gmail integration reads the Wolt login email directly from your inbox. Skip if you're only using the webhook (c) or terminal (a) paths.
+Used by paths (b) and (d) — our Gmail poller or Claude's Gmail integration reads the **Cibus OTP forwarded as email** (subject `cibus-otp`, sent by your iOS Shortcut). Skip if you're only using the webhook (c) or terminal (a) paths.
 
 ```sh
 # Set up a GCP project one-time (desktop OAuth client, gmail.readonly scope)
@@ -233,6 +221,7 @@ Without this, OTP delivery is manual: Claude will ask you for the 6 digits in ch
 
 ```
 cibus-wolt setup            Interactive first-time setup / edit existing values
+cibus-wolt wolt-login       Open Chrome to log in to Wolt manually (when session expired)
 cibus-wolt claude-setup     Claude MCP only (skip webhook prompts)
 cibus-wolt stable-tunnel    Set up ngrok static domain
 cibus-wolt devtunnel-setup  Set up Azure Dev Tunnels (alternative when ngrok is blocked)
@@ -246,6 +235,22 @@ cibus-wolt reset <scope>    Wipe cached state (all|gmail|cibus|wolt|webhook|logs
 cibus-wolt logs             Print latest log
 ```
 
+## How long does the Wolt session last?
+
+After a manual `cibus-wolt wolt-login`, Wolt sets two cookies on `.wolt.com`:
+
+| Cookie | Purpose | Expiry |
+|---|---|---|
+| `__wtoken` | Access token | ~1 year from issuance |
+| `__wrtoken` | Refresh token | ~1 year from issuance |
+
+Each `cibus-wolt run` does a quick authenticated `/me` hit before the drain. That triggers Wolt's sliding-window refresh, which re-issues both cookies with a fresh ~1-year expiry. So:
+
+- **Drain weekly or monthly** — the drain itself is the keep-alive. The session never realistically expires.
+- **Skip the tool for 12+ months, or Wolt forces a security rotation** — you'll see "no Wolt session cookie" on the next run. Run `npx cibus-wolt wolt-login` to re-authenticate.
+
+There's no separate keep-alive command on purpose — the drain already does the right thing.
+
 ## Safety
 
 - Secrets only live in `~/.cibus-wolt/.env` (0600). Not logged, not shipped.
@@ -256,7 +261,7 @@ cibus-wolt logs             Print latest log
 ## Troubleshooting
 
 - **Cibus asks for MFA every time** — the "זכור" (remember) checkbox wasn't ticked. Latest version ticks it automatically; if it's still happening, check the screenshots in `~/.cibus-wolt/screenshots/<latest>/` and file an issue.
-- **Wolt "login email" never arrives** — bot detection. Our setup uses system Chrome + disabled-automation flags. If it still trips, quit all other Chrome windows, then retry. First time, you may need to request the login email manually once from within the `~/.cibus-wolt/chrome-profile` Chrome window to warm up the session.
+- **Wolt session expired / "no Wolt session cookie"** — run `npx cibus-wolt wolt-login`. Opens Chrome to Wolt's login page; sign in manually, press Enter, done. The session cookie is reused on every subsequent drain and silently refreshed (see "How long does the Wolt session last?" below).
 - **ngrok URL 404** — token rotated or domain changed. Run `npx cibus-wolt webhook-url` for current values; update your iOS Shortcut.
 - **Selectors broken** — Wolt/Cibus redesigned their UI. Check `~/.cibus-wolt/screenshots/<latest>/` to see where, update the selector in `src/wolt.ts` or `src/cibus.ts`.
 
