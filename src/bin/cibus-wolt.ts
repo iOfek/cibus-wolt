@@ -50,7 +50,6 @@ function showHelp(): void {
       "  devtunnel-setup    Set up Azure Dev Tunnels (Microsoft) — alternative when ngrok is blocked.",
       "  setup              Interactive first-time setup wizard. Re-run to edit values.",
       "  claude-setup       Claude-MCP-only setup (skips phone webhook prompts).",
-      "  copilot-setup      Microsoft 365 Copilot setup (registers MCP endpoint via Copilot Studio).",
       "  schedule <sub>     Manage recurring drain schedules (list|add|edit|remove|enable|disable|cadence).",
       "  help               Show this help.",
       "",
@@ -119,11 +118,6 @@ async function main(): Promise<void> {
     case "claude-setup": {
       const { runClaudeSetupCommand } = await import("../commands/setup.ts");
       await runClaudeSetupCommand();
-      break;
-    }
-    case "copilot-setup": {
-      const { runCopilotSetupCommand } = await import("../commands/setup.ts");
-      await runCopilotSetupCommand();
       break;
     }
     case "schedule": {

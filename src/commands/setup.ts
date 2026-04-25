@@ -266,46 +266,6 @@ async function setupClaudeWeb(env: EnvMap): Promise<void> {
   await ask("  Press Enter when you've registered the connector (or to skip)");
 }
 
-async function setupCopilotStudio(env: EnvMap): Promise<void> {
-  const fullUrl = await prepareRemoteMcp(env, "Copilot Studio");
-  if (!fullUrl) return;
-
-  console.log("");
-  hr();
-  console.log("  COPILOT STUDIO — register the MCP server in your agent:");
-  console.log("");
-  console.log(`    Server name:        Cibus-Wolt`);
-  console.log(`    Server description: Drains leftover Cibus weekly balance into Wolt gift cards.`);
-  console.log(`                        Tools: status, balance, last_runs, reset, start_drain,`);
-  console.log(`                        drain_status, submit_magic_link, submit_otp.`);
-  console.log(`    Server URL:         ${fullUrl}`);
-  console.log(`    Authentication:     None  (token is in the URL path)`);
-  console.log("");
-  hr();
-
-  const openBrowser = await askYesNo("Open Copilot Studio now?", true);
-  if (openBrowser) openUrl("https://copilotstudio.microsoft.com");
-
-  console.log("");
-  console.log("  Steps in Copilot Studio:");
-  console.log("    1. Sign in with your Microsoft work account.");
-  console.log("    2. Create an agent (or open an existing one) — name it 'Cibus-Wolt'.");
-  console.log("    3. Tools tab → Add a tool → New tool → Model Context Protocol.");
-  console.log("    4. Paste Server name, description, and URL above. Authentication: None.");
-  console.log("    5. Click Create. The wizard probes the server and lists the 8 tools.");
-  console.log("    6. Test in the agent's chat pane: ask 'call the status tool'.");
-  console.log("    7. Channels → Microsoft 365 Copilot → publish, so it shows up at");
-  console.log("       https://m365.cloud.microsoft/chat. Tenant admin may need to enable");
-  console.log("       agent installation for your account.");
-  console.log("");
-  console.log("  Wolt magic-link: ask the agent to find the latest Wolt 'login link' email");
-  console.log("    in your Outlook inbox and pass the URL to submit_magic_link.");
-  console.log("  Cibus OTP: SMS-only, same as Claude. Either type the 6 digits in chat,");
-  console.log("    or set up the iOS Shortcut that forwards SMS → Gmail (subject 'cibus-otp').");
-  console.log("");
-  await ask("  Press Enter when you've registered the agent (or to skip)");
-}
-
 async function waitForTunnelUrl(token: string): Promise<string | null> {
   // With ngrok + a reserved static domain, the URL is known up front —
   // we just need ~/.cibus-wolt/tunnel-hostname to exist.
@@ -656,26 +616,3 @@ export async function runClaudeSetupCommand(): Promise<void> {
   printDone();
 }
 
-export async function runCopilotSetupCommand(): Promise<void> {
-  await ensureStateDir();
-  const envPath = path.join(paths.dir, ".env");
-  const env = await readEnvFile(envPath);
-
-  console.log("");
-  console.log("  cibus-wolt — Microsoft 365 Copilot setup");
-  console.log("  Configures an MCP endpoint registerable as a Copilot Studio agent");
-  console.log("  tool, so M365 Copilot can drive drains. If you haven't set");
-  console.log("  Cibus/Wolt credentials yet, run `cibus-wolt setup` first.");
-
-  if (!env.CIBUS_USER || !env.WOLT_EMAIL) {
-    console.log("");
-    console.log("  ⚠ Credentials are missing from ~/.cibus-wolt/.env. The MCP server");
-    console.log("  will still install, but won't work until you add them.");
-  }
-
-  title("Microsoft 365 Copilot via Copilot Studio");
-  await setupCopilotStudio(env);
-  await writeEnvFile(envPath, env);
-  console.log(`  ✓ Saved to ${envPath}`);
-  printDone();
-}

@@ -9,8 +9,8 @@ import { binaryExists, IS_MAC, IS_WIN, openUrl } from "../platform.ts";
 /**
  * `cibus-wolt devtunnel-setup` — sets up Microsoft Azure Dev Tunnels as the
  * tunneling provider. The MS-managed alternative to ngrok, useful when ngrok
- * is blocked by corporate network policy. Free for personal use, signs in
- * with the same Microsoft account you use for Outlook / Copilot.
+ * is blocked by corporate network policy. Free for personal use; sign in
+ * with a personal Microsoft account.
  *
  * Persistent tunnels survive reboots, so once created the URL is stable.
  *
@@ -151,8 +151,7 @@ export async function runDevtunnelSetupCommand(): Promise<void> {
     if (relogin) await runDevtunnelLogin();
   } else {
     console.log("  A browser window will open for Microsoft account sign-in.");
-    console.log("  Use the personal MS account that's connected to your Outlook (the");
-    console.log("  one Copilot reads Wolt magic-link emails from).");
+    console.log("  Use a personal MS account — work tenants often block --allow-anonymous.");
     console.log("");
     await askYesNo("Continue?", true);
     await runDevtunnelLogin();
