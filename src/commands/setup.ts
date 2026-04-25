@@ -1,12 +1,13 @@
 /* eslint-disable no-console */
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
-import { execSync, spawn } from "node:child_process";
+import { execSync } from "node:child_process";
 import readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { ensureStateDir, paths } from "../paths.ts";
+import { claudeDesktopConfigPath, findChrome, findOnPath, openUrl } from "../platform.ts";
+import { bothServicesInstalled, restartMcpService } from "../services.ts";
 
 /**
  * Interactive setup.
@@ -83,30 +84,7 @@ async function askChoice(prompt: string, options: string[], defaultOption: strin
   return options.includes(ans) ? ans : defaultOption;
 }
 
-function binaryExists(bin: string): boolean {
-  try {
-    execSync(`/usr/bin/env which ${bin}`, { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function detectChrome(): Promise<string | null> {
-  const candidates = [
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta",
-  ];
-  for (const c of candidates) {
-    try {
-      await fs.access(c);
-      return c;
-    } catch {
-      /* next */
-    }
-  }
-  return null;
-}
+// binaryExists / findChrome live in src/platform.ts.
 
 // ────────────────────────────────────────────────────────────────────────────
 // Step functions — each step is idempotent and re-runnable.
@@ -151,15 +129,9 @@ async function stepClaude(env: EnvMap, mode: Mode): Promise<boolean> {
 }
 
 async function setupClaudeDesktop(): Promise<void> {
-  const configPath = path.join(os.homedir(), "Library", "Application Support", "Claude", "claude_desktop_config.json");
+  const configPath = claudeDesktopConfigPath();
   const projectAbs = path.resolve(".");
-  const nodeBin = (() => {
-    try {
-      return execSync("/usr/bin/env which node", { encoding: "utf8" }).trim();
-    } catch {
-      return "/opt/homebrew/bin/node";
-    }
-  })();
+  const nodeBin = findOnPath("node") ?? process.execPath;
 
   const entry = {
     command: nodeBin,
@@ -229,21 +201,14 @@ async function prepareRemoteMcp(env: EnvMap, clientName: string): Promise<string
   await writeEnvFile(envPath, currentEnv);
 
   // Remote clients need a stable public URL — require ngrok domain
-  await ensureNgrokDomain();
+  await ensureTunnel();
 
-  // Ensure launchd services exist — otherwise there's no tunnel URL to show
-  const servicesLoaded = (() => {
-    try {
-      const out = execSync("launchctl list", { encoding: "utf8" });
-      return out.includes("com.ofek.cibus-wolt.tunnel") && out.includes("com.ofek.cibus-wolt.mcp");
-    } catch {
-      return false;
-    }
-  })();
+  // Ensure background services exist — otherwise there's no tunnel URL to show
+  const servicesLoaded = bothServicesInstalled();
 
   if (!servicesLoaded) {
     const doInstall = await askYesNo(
-      `  Launchd services (server + ngrok) not running. Install them now?\n  (Required to get a public URL for ${clientName} to reach.)`,
+      `  Background services (server + ngrok) not running. Install them now?\n  (Required to get a public URL for ${clientName} to reach.)`,
       true,
     );
     if (doInstall) {
@@ -259,11 +224,7 @@ async function prepareRemoteMcp(env: EnvMap, clientName: string): Promise<string
     }
   } else if (!keepToken) {
     console.log("  Restarting services to pick up the new token...");
-    try {
-      execSync("launchctl kickstart -k gui/$(id -u)/com.ofek.cibus-wolt.mcp", { stdio: "ignore" });
-    } catch {
-      /* best-effort */
-    }
+    restartMcpService();
   }
 
   // Wait for the tunnel URL to appear in the log
@@ -290,13 +251,7 @@ async function setupClaudeWeb(env: EnvMap): Promise<void> {
   hr();
 
   const openBrowser = await askYesNo("Open Claude.ai Connectors page now?", true);
-  if (openBrowser) {
-    try {
-      spawn("open", ["https://claude.ai/settings/connectors"], { detached: true, stdio: "ignore" }).unref();
-    } catch {
-      console.log("  (Couldn't auto-open. Visit: https://claude.ai/settings/connectors)");
-    }
-  }
+  if (openBrowser) openUrl("https://claude.ai/settings/connectors");
 
   console.log("");
   console.log("  Steps in the Claude.ai form:");
@@ -329,13 +284,7 @@ async function setupCopilotStudio(env: EnvMap): Promise<void> {
   hr();
 
   const openBrowser = await askYesNo("Open Copilot Studio now?", true);
-  if (openBrowser) {
-    try {
-      spawn("open", ["https://copilotstudio.microsoft.com"], { detached: true, stdio: "ignore" }).unref();
-    } catch {
-      console.log("  (Couldn't auto-open. Visit: https://copilotstudio.microsoft.com)");
-    }
-  }
+  if (openBrowser) openUrl("https://copilotstudio.microsoft.com");
 
   console.log("");
   console.log("  Steps in Copilot Studio:");
@@ -371,7 +320,7 @@ async function waitForTunnelUrl(token: string): Promise<string | null> {
 
 async function stepChromeCheck(): Promise<void> {
   title("Chrome");
-  const chromeBin = await detectChrome();
+  const chromeBin = findChrome();
   if (!chromeBin) {
     console.log("  ⚠ Google Chrome not found. Install from https://www.google.com/chrome/");
     console.log("  (Playwright will fall back to bundled Chromium, which trips Wolt bot detection more easily.)");
@@ -410,9 +359,9 @@ async function stepWebhook(env: EnvMap, claudeWasSetup: boolean): Promise<void> 
   }
 
   // Require ngrok static domain — no rotating URLs
-  await ensureNgrokDomain();
+  await ensureTunnel();
 
-  const doLaunchd = await askYesNo("Install launchd services (server + ngrok) for auto-start on login?", true);
+  const doLaunchd = await askYesNo("Install background services (server + ngrok) for auto-start on login?", true);
   if (doLaunchd) {
     try {
       execSync("npm run install-bg", { stdio: "inherit" });
@@ -434,23 +383,35 @@ async function stepWebhook(env: EnvMap, claudeWasSetup: boolean): Promise<void> 
   console.log("  Get the exact URLs:  npx cibus-wolt webhook-url");
 }
 
-async function ensureNgrokDomain(): Promise<void> {
+async function ensureTunnel(): Promise<void> {
   let configured = "";
+  let kind = "ngrok";
   try {
     configured = (await fs.readFile(paths.tunnelHostname, "utf8")).trim();
   } catch {
     /* none yet */
   }
+  try {
+    const k = (await fs.readFile(paths.tunnelKind, "utf8")).trim();
+    if (k === "ngrok" || k === "devtunnel") kind = k;
+  } catch {
+    /* default ngrok */
+  }
   if (configured) {
-    console.log(`  ✓ Existing ngrok domain: ${configured}`);
+    console.log(`  ✓ Existing ${kind} tunnel: ${configured}`);
     const keep = await askYesNo("  Keep it?", true);
     if (keep) return;
   }
-  console.log("  A stable ngrok domain is required so the URL doesn't change on reboot.");
-  const doSetup = await askYesNo("  Run the ngrok setup wizard now?", true);
-  if (!doSetup) {
-    console.log("  Skipped — webhook can't be publicly reached without a tunnel.");
-    console.log("  Run later: npx cibus-wolt stable-tunnel");
+  console.log("  A stable public URL is required so it doesn't change on reboot.");
+  console.log("  Two providers supported:");
+  console.log("    ngrok      — default. Free static *.ngrok-free.app domain.");
+  console.log("    devtunnel  — Microsoft Azure Dev Tunnels. Use if ngrok is blocked");
+  console.log("                 (e.g. on a Microsoft corporate network).");
+  console.log("");
+  const provider = await askChoice("Tunnel provider?", ["ngrok", "devtunnel"], kind);
+  if (provider === "devtunnel") {
+    const { runDevtunnelSetupCommand } = await import("./devtunnel-setup.ts");
+    await runDevtunnelSetupCommand();
     return;
   }
   const { runNgrokSetupCommand } = await import("./ngrok-setup.ts");
@@ -576,10 +537,7 @@ async function detectExisting(env: EnvMap): Promise<{
   // Claude Desktop: check for claude_desktop_config.json containing cibus-wolt
   let claudeDesktop = false;
   try {
-    const cfg = await fs.readFile(
-      path.join(os.homedir(), "Library", "Application Support", "Claude", "claude_desktop_config.json"),
-      "utf8",
-    );
+    const cfg = await fs.readFile(claudeDesktopConfigPath(), "utf8");
     claudeDesktop = cfg.includes("cibus-wolt");
   } catch { /* none */ }
   const claudeWeb = Boolean(env.MCP_BEARER_TOKEN) && hasTunnelHostname;

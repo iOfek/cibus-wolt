@@ -1,10 +1,10 @@
 /* eslint-disable no-console */
 import fs from "node:fs/promises";
-import path from "node:path";
-import { execSync, spawn } from "node:child_process";
+import { execSync } from "node:child_process";
 import readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { ensureStateDir, paths } from "../paths.ts";
+import { binaryExists, ngrokInstallHint, openUrl, tryInstallNgrok } from "../platform.ts";
 
 /**
  * `cibus-wolt tunnel-setup` — sets up ngrok with a free static domain so your
@@ -33,15 +33,6 @@ async function askYesNo(prompt: string, defaultYes: boolean): Promise<boolean> {
   return ans === "y" || ans === "yes";
 }
 
-function binaryExists(bin: string): boolean {
-  try {
-    execSync(`/usr/bin/env which ${bin}`, { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function hr(): void {
   console.log("─".repeat(66));
 }
@@ -54,8 +45,8 @@ function title(s: string): void {
 }
 
 function ngrokAuthtokenConfigured(): boolean {
-  // ngrok stores config at ~/Library/Application Support/ngrok/ngrok.yml on macOS
-  // or ~/.config/ngrok/ngrok.yml. Easiest check: `ngrok config check` exits 0.
+  // ngrok stores config at platform-specific paths; easiest check: `ngrok
+  // config check` exits 0 iff a token is on file.
   try {
     execSync("ngrok config check", { stdio: "ignore" });
     return true;
@@ -77,15 +68,14 @@ export async function runNgrokSetupCommand(): Promise<void> {
   if (binaryExists("ngrok")) {
     console.log("  ✓ ngrok already installed");
   } else {
-    const doInstall = await askYesNo("ngrok not found. Run `brew install ngrok`?", true);
+    const hint = ngrokInstallHint();
+    const doInstall = await askYesNo(`ngrok not found. Run \`${hint}\`?`, true);
     if (!doInstall) {
       console.log("  Install ngrok manually, then re-run this command.");
       return;
     }
-    try {
-      execSync("brew install ngrok", { stdio: "inherit" });
-    } catch {
-      console.log("  brew install failed. Install manually from https://ngrok.com/download");
+    if (!tryInstallNgrok()) {
+      console.log("  Auto-install failed. Install manually from https://ngrok.com/download");
       return;
     }
   }
@@ -105,16 +95,7 @@ export async function runNgrokSetupCommand(): Promise<void> {
     console.log("  2. Copy your authtoken from: https://dashboard.ngrok.com/get-started/your-authtoken");
     console.log("");
     const openBrowser = await askYesNo("Open the ngrok dashboard now?", true);
-    if (openBrowser) {
-      try {
-        spawn("open", ["https://dashboard.ngrok.com/get-started/your-authtoken"], {
-          detached: true,
-          stdio: "ignore",
-        }).unref();
-      } catch {
-        /* fallthrough */
-      }
-    }
+    if (openBrowser) openUrl("https://dashboard.ngrok.com/get-started/your-authtoken");
     await promptAndStoreToken();
   }
 
@@ -128,13 +109,7 @@ export async function runNgrokSetupCommand(): Promise<void> {
   console.log("  3. Copy the full domain it shows you.");
   console.log("");
   const openDomains = await askYesNo("Open the Domains page now?", true);
-  if (openDomains) {
-    try {
-      spawn("open", ["https://dashboard.ngrok.com/domains"], { detached: true, stdio: "ignore" }).unref();
-    } catch {
-      /* fallthrough */
-    }
-  }
+  if (openDomains) openUrl("https://dashboard.ngrok.com/domains");
 
   let existing = "";
   try {
@@ -149,11 +124,14 @@ export async function runNgrokSetupCommand(): Promise<void> {
     if (!save) return;
   }
   await fs.writeFile(paths.tunnelHostname, domain, { mode: 0o600 });
+  await fs.writeFile(paths.tunnelKind, "ngrok\n", { mode: 0o600 });
+  // Clean up any leftover devtunnel marker from a previous provider switch.
+  await fs.rm(paths.devtunnelId, { force: true });
   console.log(`  ✓ Saved to ${paths.tunnelHostname}`);
 
-  // Step 4: install/reload launchd tunnel service
-  title("4/4  Install launchd tunnel service");
-  const doInstall = await askYesNo("Install/update the launchd service that runs ngrok on login?", true);
+  // Step 4: install/reload background tunnel service
+  title("4/4  Install background tunnel service");
+  const doInstall = await askYesNo("Install/update the service that runs ngrok on login?", true);
   if (!doInstall) {
     console.log("  Skipped. Run manually:");
     console.log(`    ngrok http --url=${domain} 3737`);

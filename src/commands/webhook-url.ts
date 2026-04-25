@@ -50,9 +50,8 @@ export async function runWebhookUrlCommand(): Promise<void> {
     process.exit(1);
   }
   if (!found) {
-    console.error("No tunnel URL found. Is cloudflared running?");
-    console.error("  brew install cloudflared && npm run install-bg");
-    console.error("  Or set up a stable tunnel: npx cibus-wolt stable-tunnel");
+    console.error("No tunnel URL found.");
+    console.error("  Set up a stable ngrok tunnel: npx cibus-wolt stable-tunnel");
     process.exit(1);
   }
 

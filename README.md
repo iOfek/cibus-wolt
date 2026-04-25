@@ -80,7 +80,9 @@ State lives at `~/.cibus-wolt/`:
 | `chrome-profile/`       | Wolt session cookies                   |
 | `chrome-profile-cibus/` | Cibus portal session cookies           |
 | `webhook-token`         | Random secret for the webhook URL path |
-| `tunnel-hostname`       | Your stable public hostname (ngrok)    |
+| `tunnel-hostname`       | Your stable public hostname (ngrok or devtunnel) |
+| `tunnel-kind`           | `ngrok` (default) or `devtunnel`       |
+| `devtunnel-id`          | Local Azure Dev Tunnel name (devtunnel only) |
 | `runs.jsonl`            | Append-only run log                    |
 | `logs/`, `screenshots/` | Debug output                           |
 
@@ -117,11 +119,25 @@ npx cibus-wolt setup
 ```
 
 The ngrok step:
-1. `brew install ngrok` if needed
+1. Installs ngrok if needed — `brew install ngrok` on macOS, `winget install --id Ngrok.Ngrok -e` on Windows.
 2. Sign up free at https://dashboard.ngrok.com/signup (no credit card)
 3. Paste your authtoken — wizard runs `ngrok config add-authtoken`
 4. Reserve one free static domain at https://dashboard.ngrok.com/domains (pick any `<name>.ngrok-free.app`)
-5. Wizard writes it to `~/.cibus-wolt/tunnel-hostname` and installs launchd services
+5. Wizard writes it to `~/.cibus-wolt/tunnel-hostname` and installs background services (launchd on macOS, Task Scheduler on Windows)
+
+**Blocked by your corp network?** ngrok is blocked on many Microsoft corporate networks. Use Azure Dev Tunnels instead — Microsoft's first-party tunnel, signed in with your personal MS account:
+
+```sh
+npx cibus-wolt devtunnel-setup
+# → installs `devtunnel` (winget on Windows, brew --cask on macOS)
+# → opens browser for Microsoft account sign-in (use your *personal* MS account,
+#   the same one that's connected to your Outlook so Copilot can read Wolt mail)
+# → creates a persistent tunnel `cibus-wolt` with --allow-anonymous
+# → writes the resulting `<name>-3737.<cluster>.devtunnels.ms` hostname and
+#   installs background services
+```
+
+Stable URL across reboots, same `/webhook/<token>/...` and `/mcp/<token>` endpoints — only the hostname differs. If `--allow-anonymous` is rejected by your tenant policy, sign in with a personal MS account (not work) and re-run.
 
 After that, `npx cibus-wolt webhook-url` prints your three stable URLs:
 
@@ -207,7 +223,7 @@ M365 Copilot orchestrates the drain via a Copilot Studio agent that wraps our MC
 npx cibus-wolt copilot-setup
 # → wizard generates MCP_BEARER_TOKEN if missing
 # → runs ngrok stable-tunnel if not already configured
-# → installs launchd services (server + ngrok)
+# → installs background services (server + ngrok) via launchd / Task Scheduler
 # → prints the Server URL to paste into Copilot Studio
 ```
 
@@ -268,6 +284,7 @@ cibus-wolt setup            Interactive first-time setup / edit existing values
 cibus-wolt claude-setup     Claude MCP only (skip webhook prompts)
 cibus-wolt copilot-setup    M365 Copilot setup (registers MCP endpoint via Copilot Studio)
 cibus-wolt stable-tunnel    Set up ngrok static domain
+cibus-wolt devtunnel-setup  Set up Azure Dev Tunnels (alternative when ngrok is blocked)
 cibus-wolt run [--dry-run] [--amount N]
                             Run a drain. --amount N spends exactly N ₪ (≤ available).
 cibus-wolt balance          Just fetch the Cibus balance
@@ -294,9 +311,9 @@ cibus-wolt logs             Print latest log
 
 ## What's next / known gaps
 
-- No built-in scheduling yet. For weekly auto-drain, add a launchd/cron entry yourself pointing at `npx cibus-wolt run`.
+- Built-in scheduling exists (`cibus-wolt schedule add`) but only fires while the background MCP service is running. Install via `npm run install-bg`.
 - Not on npm. Clone + `npm install` for now.
-- macOS only for the launchd paths (server + ngrok auto-start). CLI itself should work on Linux/Windows with Node 24 + Chrome, not tested.
+- Supported OSes: macOS (launchd) and Windows 10+ / Windows 11 (Task Scheduler) for both the CLI and the auto-start background services. PowerShell is the default shell on Windows. Linux works for the CLI but the auto-start path isn't wired up yet — run `npm run mcp` under your own systemd unit if you need it.
 
 ## License
 

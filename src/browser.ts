@@ -1,7 +1,7 @@
 import { chromium, type BrowserContext } from "playwright";
-import { existsSync } from "node:fs";
 import { logger } from "./logger.ts";
 import { paths } from "./paths.ts";
+import { findChrome } from "./platform.ts";
 
 /**
  * Acquire a Playwright BrowserContext driving the user's actual Google Chrome
@@ -22,22 +22,9 @@ export interface BrowserOpts {
   userDataDir?: string;
 }
 
-const CHROME_PATHS = [
-  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  "/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta",
-  "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
-];
-
-function findChromeBinary(): string | null {
-  for (const p of CHROME_PATHS) {
-    if (existsSync(p)) return p;
-  }
-  return null;
-}
-
 export async function acquireBrowser(opts: BrowserOpts = {}): Promise<AcquiredBrowser> {
   const userDataDir = opts.userDataDir ?? paths.chromeProfile;
-  const chromeBin = findChromeBinary();
+  const chromeBin = findChrome();
   const args = [
     "--disable-blink-features=AutomationControlled",
     "--disable-features=IsolateOrigins,site-per-process",
@@ -66,7 +53,7 @@ export async function acquireBrowser(opts: BrowserOpts = {}): Promise<AcquiredBr
   }
 
   logger.warn(
-    "⚠ Google Chrome not found at /Applications/Google Chrome.app. Falling back to Playwright's bundled Chromium (higher Wolt bot-detection risk).",
+    "⚠ Google Chrome not found. Falling back to Playwright's bundled Chromium (higher Wolt bot-detection risk).",
   );
   const context = await chromium.launchPersistentContext(userDataDir, common);
   await context.addInitScript(() => {

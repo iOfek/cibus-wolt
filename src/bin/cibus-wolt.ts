@@ -47,6 +47,7 @@ function showHelp(): void {
       "  webhook-url        Print the current webhook URL (tunnel + token).",
       "  rotate-token       Regenerate the webhook token.",
       "  stable-tunnel      Set up ngrok with a free static domain (stable URL).",
+      "  devtunnel-setup    Set up Azure Dev Tunnels (Microsoft) — alternative when ngrok is blocked.",
       "  setup              Interactive first-time setup wizard. Re-run to edit values.",
       "  claude-setup       Claude-MCP-only setup (skips phone webhook prompts).",
       "  copilot-setup      Microsoft 365 Copilot setup (registers MCP endpoint via Copilot Studio).",
@@ -103,6 +104,11 @@ async function main(): Promise<void> {
     case "stable-tunnel": {
       const { runNgrokSetupCommand } = await import("../commands/ngrok-setup.ts");
       await runNgrokSetupCommand();
+      break;
+    }
+    case "devtunnel-setup": {
+      const { runDevtunnelSetupCommand } = await import("../commands/devtunnel-setup.ts");
+      await runDevtunnelSetupCommand();
       break;
     }
     case "setup": {

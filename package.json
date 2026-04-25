@@ -31,7 +31,6 @@
     "mcp-stdio": "node --import tsx/esm src/scripts/mcp-stdio.ts",
     "install-bg": "node --import tsx/esm src/scripts/install-bg.ts",
     "uninstall-bg": "node --import tsx/esm src/scripts/uninstall-bg.ts",
-    "tunnel-url": "cat ~/.cibus-wolt/tunnel-hostname 2>/dev/null | sed 's|^|https://|' || echo 'No tunnel configured. Run: npx cibus-wolt stable-tunnel'",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
