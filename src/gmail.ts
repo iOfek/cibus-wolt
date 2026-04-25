@@ -175,7 +175,11 @@ export async function fetchWoltMagicLink(opts: FindMagicLinkOpts): Promise<strin
         if (urlEmail.toLowerCase() !== expectEmail.toLowerCase()) {
           logger.warn({ id: m.id, urlEmail, expectEmail }, "URL email differs from config — using anyway (mailbox scoped)");
         }
-        logger.info({ messageId: m.id }, "✓ Magic link found");
+        const dateStr = new Date(internalDate).toISOString();
+        logger.info(
+          { messageId: m.id, subject, from, dateStr, ageMin },
+          "✓ Using this Gmail message for the magic link",
+        );
         return url;
       }
     } catch (e) {

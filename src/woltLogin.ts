@@ -65,11 +65,43 @@ export async function ensureWoltLoggedIn(opts: WoltLoginOpts): Promise<void> {
   await page.goto(magicUrl, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(3000);
   await dismissWoltOverlays(page);
+  await clickConfirmBrowserButton(page);
 
   if (!(await isLoggedIn(page))) {
     throw new Error("Magic-link navigation did not produce a logged-in session");
   }
   logger.info("Wolt login complete");
+}
+
+/**
+ * Wolt's "Confirm you're using this browser" challenge appears when the
+ * fingerprint of the browser opening the magic link differs from the one
+ * that requested it. Clicking Confirm completes the login.
+ */
+async function clickConfirmBrowserButton(page: Page): Promise<void> {
+  const candidates = [
+    'button[data-test-id*="confirm" i]',
+    'button[data-localization-key*="confirm" i]',
+    'button:has-text("Confirm")',
+    'button:has-text("אישור")',
+    'button:has-text("אשר")',
+  ];
+  for (let attempt = 0; attempt < 3; attempt++) {
+    for (const sel of candidates) {
+      const loc = page.locator(sel).first();
+      try {
+        if (!(await loc.isVisible({ timeout: 200 }))) continue;
+        const label = (await loc.innerText({ timeout: 200 }).catch(() => "")).trim();
+        await loc.click({ timeout: 2000 });
+        logger.info({ sel, label }, "Clicked Wolt 'Confirm browser' button");
+        await page.waitForTimeout(1500);
+        return;
+      } catch {
+        /* try next */
+      }
+    }
+    await page.waitForTimeout(500);
+  }
 }
 
 async function fillEmailAndSubmit(page: Page, email: string): Promise<boolean> {
