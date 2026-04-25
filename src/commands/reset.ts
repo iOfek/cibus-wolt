@@ -7,10 +7,10 @@ type Scope = "all" | "gmail" | "cibus" | "wolt" | "webhook" | "logs";
 const map: Record<Scope, string[]> = {
   gmail: [paths.token],
   cibus: [paths.chromeProfileCibus],
-  wolt: [paths.chromeProfile],
+  wolt: [paths.chromeProfile, paths.woltCookies],
   webhook: [paths.webhookToken],
   logs: [paths.logsDir, paths.screenshots, paths.runs],
-  all: [paths.token, paths.chromeProfile, paths.chromeProfileCibus, paths.webhookToken],
+  all: [paths.token, paths.chromeProfile, paths.chromeProfileCibus, paths.woltCookies, paths.webhookToken],
 };
 
 export async function runResetCommand(args: string[]): Promise<void> {

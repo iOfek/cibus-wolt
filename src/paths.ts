@@ -20,6 +20,7 @@ export const paths = {
   webhookToken: path.join(STATE_DIR, "webhook-token"),
   chromeProfile: path.join(STATE_DIR, "chrome-profile"),
   chromeProfileCibus: path.join(STATE_DIR, "chrome-profile-cibus"),
+  woltCookies: path.join(STATE_DIR, "wolt-cookies.json"),
   logsDir: path.join(STATE_DIR, "logs"),
   runs: path.join(STATE_DIR, "runs.jsonl"),
   screenshots: path.join(STATE_DIR, "screenshots"),

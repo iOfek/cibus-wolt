@@ -1,9 +1,11 @@
-import type { Page } from "playwright";
+import type { BrowserContext, Page } from "playwright";
 import type { OAuth2Client } from "google-auth-library";
 import readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
+import fs from "node:fs/promises";
 import { fetchWoltMagicLink } from "./gmail.ts";
 import { logger } from "./logger.ts";
+import { paths } from "./paths.ts";
 import { dismissWoltOverlays } from "./woltOverlays.ts";
 
 export interface WoltLoginOpts {
@@ -16,18 +18,21 @@ export interface WoltLoginOpts {
 
 export async function ensureWoltLoggedIn(opts: WoltLoginOpts): Promise<void> {
   const { page } = opts;
+  const context = page.context();
 
-  // Fast path: profile already has a valid Wolt session cookie. This is the
-  // analog of gmail.tryLoadAuthClient — checks cached credentials without any
-  // network or navigation. Avoids the /me redirect-bounce that confused
-  // Wolt's bot detection on Windows.
+  // Restore Wolt cookies from our own JSON cache. Chrome's profile cookie
+  // store can lose late Set-Cookie writes (e.g. from a Google OAuth callback)
+  // when shutdown doesn't flush in time. We persist to JSON ourselves so the
+  // session survives regardless of Chrome's flush behavior.
+  await loadCookiesFromDisk(context);
+
   if (await hasWoltSessionCookie(page)) {
     logger.info("Wolt session cookie present — skipping login");
     // Best-effort keep-alive: one authenticated page hit nudges Wolt's
-    // sliding-window session forward and the new Set-Cookie is persisted
-    // to the Chrome profile. Failures are non-fatal — the cookie was
-    // already valid; the drain can proceed without the refresh.
+    // sliding-window session forward; the new Set-Cookie response updates
+    // both the Chrome profile and our JSON cache.
     await refreshWoltSession(page);
+    await saveCookiesToDisk(context);
     return;
   }
 
@@ -41,6 +46,7 @@ export async function ensureWoltLoggedIn(opts: WoltLoginOpts): Promise<void> {
   // magic-link-poll helpers below (fillEmailAndSubmit, fetchWoltMagicLink,
   // clickConfirmBrowserButton) are kept for future re-enablement.
   logger.info("👉 Please log in to Wolt manually in the visible browser.");
+  logger.info("   Sign-in via Google / email-link / whatever Wolt offers — all are fine.");
   logger.info("   When you're logged in, come back to this terminal and press Enter.");
   await waitForEnter("   Press Enter once Wolt shows you logged in: ");
 
@@ -49,7 +55,44 @@ export async function ensureWoltLoggedIn(opts: WoltLoginOpts): Promise<void> {
       "No Wolt session cookie found after manual login. Re-run and make sure the login completed in the visible browser window before pressing Enter.",
     );
   }
-  logger.info("✓ Wolt session cookie present — login confirmed");
+  await saveCookiesToDisk(context);
+  logger.info("✓ Wolt session cookie present — login confirmed and saved");
+}
+
+/**
+ * Persist Wolt cookies (.wolt.com + wolt.com) to JSON. Called after every
+ * successful auth check so the file is always fresh. Chmod 0600 — these
+ * cookies are credential-equivalent.
+ */
+async function saveCookiesToDisk(context: BrowserContext): Promise<void> {
+  try {
+    const cookies = await context.cookies("https://wolt.com");
+    if (cookies.length === 0) {
+      logger.debug("No Wolt cookies to save");
+      return;
+    }
+    await fs.writeFile(paths.woltCookies, JSON.stringify(cookies, null, 2), { mode: 0o600 });
+    logger.debug({ count: cookies.length, path: paths.woltCookies }, "Saved Wolt cookies");
+  } catch (e) {
+    logger.warn({ err: e instanceof Error ? e.message : String(e) }, "Failed to save Wolt cookies");
+  }
+}
+
+/**
+ * Restore Wolt cookies from our JSON cache into the browser context. No-op
+ * when the file is missing (first run) or unreadable.
+ */
+async function loadCookiesFromDisk(context: BrowserContext): Promise<void> {
+  try {
+    const raw = await fs.readFile(paths.woltCookies, "utf8");
+    const cookies = JSON.parse(raw);
+    if (Array.isArray(cookies) && cookies.length > 0) {
+      await context.addCookies(cookies);
+      logger.debug({ count: cookies.length }, "Loaded Wolt cookies from disk");
+    }
+  } catch {
+    /* first run, or file removed — proceed without */
+  }
 }
 
 async function refreshWoltSession(page: Page): Promise<void> {
