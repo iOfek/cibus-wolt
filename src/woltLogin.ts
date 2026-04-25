@@ -18,16 +18,16 @@ export interface WoltLoginOpts {
 export async function ensureWoltLoggedIn(opts: WoltLoginOpts): Promise<void> {
   const { page, email } = opts;
 
-  await page.goto("https://wolt.com/en", { waitUntil: "domcontentloaded" });
-  await page.waitForTimeout(2000);
-  await dismissWoltOverlays(page);
-
-  if (await isLoggedIn(page)) {
-    logger.info("Wolt session already active");
+  // Fast path: profile already has a valid Wolt session cookie. This is the
+  // analog of gmail.tryLoadAuthClient — checks cached credentials without any
+  // network or navigation. Avoids the /me redirect-bounce that confused
+  // Wolt's bot detection on Windows.
+  if (await hasWoltSessionCookie(page)) {
+    logger.info("Wolt session cookie present — skipping login");
     return;
   }
 
-  logger.info("No Wolt session — opening login page for manual login");
+  logger.info("No Wolt session cookie — navigating to login page");
   await page.goto("https://wolt.com/en/me/login", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1500);
   await dismissWoltOverlays(page);
@@ -36,14 +36,47 @@ export async function ensureWoltLoggedIn(opts: WoltLoginOpts): Promise<void> {
   // on fresh profiles, so we hand the browser to the user. The auto-fill +
   // magic-link-poll helpers below (fillEmailAndSubmit, fetchWoltMagicLink,
   // clickConfirmBrowserButton) are kept for future re-enablement.
-  logger.info(`👉 Please log in to Wolt manually in the visible browser window (account: ${email}).`);
+  logger.info(`👉 Please log in to Wolt manually in the visible browser (account: ${email}).`);
   logger.info("   When you're logged in, come back to this terminal and press Enter.");
   await waitForEnter("   Press Enter once Wolt shows you logged in: ");
 
-  if (!(await isLoggedIn(page))) {
-    throw new Error("Wolt does not appear to be logged in — re-run and try again");
+  if (!(await hasWoltSessionCookie(page))) {
+    throw new Error(
+      "No Wolt session cookie found after manual login. Re-run and make sure the login completed in the visible browser window before pressing Enter.",
+    );
   }
-  logger.info("✓ Wolt login confirmed — continuing");
+  logger.info("✓ Wolt session cookie present — login confirmed");
+}
+
+/**
+ * Validate Wolt login by inspecting the browser profile's cookies for an
+ * auth/session token. This is the cheap Gmail-style "do we have credentials?"
+ * check — no navigation, no API call. The Chrome profile persists cookies
+ * across runs, so a successful login once means subsequent runs hit the
+ * fast path above.
+ */
+async function hasWoltSessionCookie(page: Page): Promise<boolean> {
+  try {
+    const cookies = await page.context().cookies("https://wolt.com");
+    const candidate = cookies.find((c) => {
+      if (!c.value || c.value.length < 16) return false;
+      // Skip CSRF / cross-site / consent-shaped cookies — they're not auth.
+      if (/(csrf|consent|locale|cf[-_])/i.test(c.name)) return false;
+      return /(token|session|auth|userid|jwt)/i.test(c.name);
+    });
+    if (candidate) {
+      logger.debug({ name: candidate.name, valueLen: candidate.value.length }, "Wolt session cookie matched");
+      return true;
+    }
+    logger.debug(
+      { cookieCount: cookies.length, names: cookies.map((c) => c.name) },
+      "No Wolt session cookie matched",
+    );
+    return false;
+  } catch (e) {
+    logger.warn({ err: e instanceof Error ? e.message : String(e) }, "Wolt cookie check failed");
+    return false;
+  }
 }
 
 async function waitForEnter(prompt: string): Promise<void> {
