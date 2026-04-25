@@ -14,7 +14,7 @@ export interface WoltLoginOpts {
 }
 
 export async function ensureWoltLoggedIn(opts: WoltLoginOpts): Promise<void> {
-  const { page, email, auth } = opts;
+  const { page, email } = opts;
 
   await page.goto("https://wolt.com/en", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(2000);
@@ -25,57 +25,46 @@ export async function ensureWoltLoggedIn(opts: WoltLoginOpts): Promise<void> {
     return;
   }
 
-  logger.info("No Wolt session — opening login page");
+  logger.info("No Wolt session — opening login page for manual login");
   await page.goto("https://wolt.com/en/me/login", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1500);
   await dismissWoltOverlays(page);
 
-  const sentAt = new Date();
-  const autoFilled = await fillEmailAndSubmit(page, email);
+  // Manual login path: Wolt's bot detection rejects automated email submission
+  // on fresh profiles, so we hand the browser to the user. The auto-fill +
+  // magic-link-poll helpers below (fillEmailAndSubmit, fetchWoltMagicLink,
+  // clickConfirmBrowserButton) are kept for future re-enablement.
+  logger.info(`👉 Please log in to Wolt manually in the visible browser window (account: ${email}).`);
+  logger.info("   The script will detect when login completes and continue automatically.");
+  logger.info("   Waiting up to 3 minutes...");
+  await waitForManualLogin(page, 3 * 60_000);
 
-  if (autoFilled) {
-    logger.info(`Wolt email auto-filled and submitted: ${email}`);
-  } else {
-    // Fall back to manual: only path here is when our selectors miss a UI
-    // change. The user types email + clicks Continue in the visible browser.
-    logger.warn("👉 Auto-fill failed (selectors may be stale). Enter email + click Continue in the visible browser.");
-    logger.warn(`   Expected email: ${email}`);
+  logger.info("✓ Wolt login detected — continuing");
+}
+
+async function waitForManualLogin(page: Page, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let offLoginSince = 0;
+  while (Date.now() < deadline) {
+    try {
+      const url = page.url();
+      const onLoginPage = /\/login(\b|\/|\?|$)/i.test(url);
+      if (!onLoginPage && url.includes("wolt.com")) {
+        if (offLoginSince === 0) offLoginSince = Date.now();
+        // URL has been off the login page for 3s — verify with a definitive check.
+        if (Date.now() - offLoginSince > 3000) {
+          if (await isLoggedIn(page)) return;
+          offLoginSince = 0; // false positive — back to waiting
+        }
+      } else {
+        offLoginSince = 0;
+      }
+    } catch {
+      /* page may be navigating — try again next tick */
+    }
+    await page.waitForTimeout(2000);
   }
-  // Diagnostic pause: holds the page open for 10s so the user can inspect what
-  // Wolt actually showed (success toast vs. automation warning vs. captcha)
-  // before we start polling for the magic-link email.
-  logger.info("⏸  Pausing 10s so you can inspect the page after email submit (look for: 'check your email' toast, captcha, or any error)...");
-  await page.waitForTimeout(10_000);
-  logger.info("   Awaiting magic-link delivery (Gmail / webhook / MCP / stdin) — up to 10 minutes.");
-
-  let magicUrl: string;
-  if (opts.fetchMagicLink) {
-    logger.info("Awaiting magic-link from external submitter (MCP)");
-    magicUrl = await opts.fetchMagicLink();
-  } else if (auth) {
-    magicUrl = await fetchWoltMagicLink({
-      auth,
-      since: new Date(sentAt.getTime() - 60_000),
-      expectEmail: email,
-      timeoutMs: 10 * 60 * 1000,
-      pollMs: 10_000,
-    });
-  } else {
-    throw new Error(
-      "Wolt magic-link required but no Gmail auth and no external provider. Either set GOOGLE_CLIENT_ID (CLI mode) or wire fetchMagicLink (MCP mode).",
-    );
-  }
-
-  logger.info("Magic link received — opening it in the same browser");
-  await page.goto(magicUrl, { waitUntil: "domcontentloaded" });
-  await page.waitForTimeout(3000);
-  await dismissWoltOverlays(page);
-  await clickConfirmBrowserButton(page);
-
-  if (!(await isLoggedIn(page))) {
-    throw new Error("Magic-link navigation did not produce a logged-in session");
-  }
-  logger.info("Wolt login complete");
+  throw new Error("Manual Wolt login timed out after 3 minutes");
 }
 
 /**
