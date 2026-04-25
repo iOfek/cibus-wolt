@@ -1,5 +1,7 @@
 import type { Page } from "playwright";
 import type { OAuth2Client } from "google-auth-library";
+import readline from "node:readline/promises";
+import { stdin, stdout } from "node:process";
 import { fetchWoltMagicLink } from "./gmail.ts";
 import { logger } from "./logger.ts";
 import { dismissWoltOverlays } from "./woltOverlays.ts";
@@ -35,36 +37,29 @@ export async function ensureWoltLoggedIn(opts: WoltLoginOpts): Promise<void> {
   // magic-link-poll helpers below (fillEmailAndSubmit, fetchWoltMagicLink,
   // clickConfirmBrowserButton) are kept for future re-enablement.
   logger.info(`👉 Please log in to Wolt manually in the visible browser window (account: ${email}).`);
-  logger.info("   The script will detect when login completes and continue automatically.");
-  logger.info("   Waiting up to 3 minutes...");
-  await waitForManualLogin(page, 3 * 60_000);
+  logger.info("   When you're logged in, come back to this terminal and press Enter.");
+  await waitForEnter("   Press Enter once Wolt shows you logged in: ");
 
-  logger.info("✓ Wolt login detected — continuing");
+  if (!(await isLoggedIn(page))) {
+    throw new Error("Wolt does not appear to be logged in — re-run and try again");
+  }
+  logger.info("✓ Wolt login confirmed — continuing");
 }
 
-async function waitForManualLogin(page: Page, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let offLoginSince = 0;
-  while (Date.now() < deadline) {
-    try {
-      const url = page.url();
-      const onLoginPage = /\/login(\b|\/|\?|$)/i.test(url);
-      if (!onLoginPage && url.includes("wolt.com")) {
-        if (offLoginSince === 0) offLoginSince = Date.now();
-        // URL has been off the login page for 3s — verify with a definitive check.
-        if (Date.now() - offLoginSince > 3000) {
-          if (await isLoggedIn(page)) return;
-          offLoginSince = 0; // false positive — back to waiting
-        }
-      } else {
-        offLoginSince = 0;
-      }
-    } catch {
-      /* page may be navigating — try again next tick */
-    }
-    await page.waitForTimeout(2000);
+async function waitForEnter(prompt: string): Promise<void> {
+  if (!stdin.isTTY) {
+    // No interactive terminal (e.g. MCP / scripted run) — fall back to a
+    // fixed delay so the script doesn't hang forever.
+    logger.warn("Non-TTY stdin — sleeping 60s instead of waiting for Enter");
+    await new Promise((r) => setTimeout(r, 60_000));
+    return;
   }
-  throw new Error("Manual Wolt login timed out after 3 minutes");
+  const rl = readline.createInterface({ input: stdin, output: stdout });
+  try {
+    await rl.question(prompt);
+  } finally {
+    rl.close();
+  }
 }
 
 /**
