@@ -373,9 +373,17 @@ async function main() {
   }
 
   if (!cfg.hostname) {
-    logger.warn("No tunnel hostname configured yet (~/.cibus-wolt/tunnel-hostname missing).");
-    logger.warn("Server is running on localhost:3737 but not publicly reachable.");
-    logger.warn("Run `npx cibus-wolt stable-tunnel` (ngrok) or `npx cibus-wolt devtunnel-setup` (Azure Dev Tunnels), then re-run install-bg.");
+    console.log("");
+    console.log("━".repeat(74));
+    console.log("✓ MCP service installed + running on localhost:3737.");
+    console.log("  Schedules will fire as configured.");
+    console.log("");
+    console.log("  No tunnel configured — local-only. This is the right setup if you only");
+    console.log("  want scheduled drains. To add remote-trigger access later:");
+    console.log("    npx cibus-wolt stable-tunnel       # ngrok");
+    console.log("    npx cibus-wolt devtunnel-setup     # Azure Dev Tunnels");
+    console.log("    then re-run: npm run install-bg");
+    console.log("━".repeat(74));
     return;
   }
 

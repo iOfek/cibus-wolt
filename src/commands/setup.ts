@@ -73,15 +73,25 @@ async function ask(prompt: string, defaultValue?: string): Promise<string> {
 
 async function askYesNo(prompt: string, defaultYes: boolean): Promise<boolean> {
   const def = defaultYes ? "Y/n" : "y/N";
-  const ans = (await ask(`${prompt} (${def})`)).toLowerCase();
-  if (ans === "") return defaultYes;
-  return ans === "y" || ans === "yes";
+  // Re-prompt on unrecognized input rather than silently treating it as "no".
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const ans = (await ask(`${prompt} (${def})`)).toLowerCase();
+    if (ans === "") return defaultYes;
+    if (ans === "y" || ans === "yes") return true;
+    if (ans === "n" || ans === "no") return false;
+    console.log(`  Please answer y or n (got: "${ans}").`);
+  }
 }
 
 async function askChoice(prompt: string, options: string[], defaultOption: string): Promise<string> {
   const list = options.map((o) => (o === defaultOption ? `[${o}]` : o)).join(" / ");
-  const ans = await ask(`${prompt} (${list})`, defaultOption);
-  return options.includes(ans) ? ans : defaultOption;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const ans = await ask(`${prompt} (${list})`, defaultOption);
+    if (options.includes(ans)) return ans;
+    console.log(`  Pick one of: ${options.join(", ")}.`);
+  }
 }
 
 // binaryExists / findChrome live in src/platform.ts.
@@ -116,8 +126,12 @@ async function stepClaude(env: EnvMap, mode: Mode): Promise<boolean> {
   if (mode === "claude-only") {
     console.log("  Configuring the MCP connector for Claude.");
   } else {
-    console.log("  Claude's Gmail integration will deliver Cibus OTPs + Wolt magic-links,");
-    console.log("  so no phone Shortcut is needed.");
+    console.log("  Claude's Gmail integration reads the Wolt magic-link email directly.");
+    console.log("  Cibus OTPs are SMS — Claude can't read those. You either:");
+    console.log("    • type the 6 digits into the Claude chat when prompted, or");
+    console.log("    • set up the iOS Shortcut that forwards Cibus SMS to Gmail");
+    console.log("      (subject 'cibus-otp') — see README section");
+    console.log("      'iOS Shortcut — forward Cibus SMS to Gmail'.");
   }
   console.log("");
 
@@ -334,13 +348,139 @@ async function stepWebhook(env: EnvMap, claudeWasSetup: boolean): Promise<void> 
   }
 
   console.log("");
-  console.log("  Phone Shortcut setup (iOS):");
-  console.log("    Shortcuts → Automation → 'When I get a text from Pluxee'");
-  console.log("    → Extract 6-digit code → Get Contents of URL (POST) →");
-  console.log(`       https://<your-ngrok-domain>/webhook/<token>/otp`);
-  console.log("    → Body JSON: {\"code\": <extracted>}");
-  console.log("  Same skeleton for Wolt mail → /webhook/<token>/magic_link");
-  console.log("  Get the exact URLs:  npx cibus-wolt webhook-url");
+  console.log("  Phone Shortcut setup (iOS) — required for OTP/magic-link delivery:");
+  console.log("    OTP:        Automation → Message (filter Pluxee + 'קוד האימות')");
+  console.log("                → Get Contents of URL (POST)");
+  console.log(`                → https://<your-ngrok-domain>/webhook/<token>/otp`);
+  console.log("                → Body JSON: {\"code\": <Message>}  (server extracts digits)");
+  console.log("    Magic link: Automation → Email (filter 'your login link')");
+  console.log("                → Get URLs from Input → POST to /webhook/<token>/magic_link");
+  console.log("                → Body: {\"url\": <URLs>}");
+  console.log("  Full step-by-step in README, section 'CLI + phone webhook (ngrok)'.");
+  console.log("  Get the exact URLs anytime: npx cibus-wolt webhook-url");
+
+  await testOtpShortcutWebhook(env);
+}
+
+async function testOtpShortcutWebhook(env: EnvMap): Promise<void> {
+  console.log("");
+  const doTest = await askYesNo("Test the OTP Shortcut end-to-end now? (we trigger the SMS for you)", true);
+  if (!doTest) return;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const ok = await withSilencedLogger(() => runWebhookOtpTest(env));
+    if (ok) return;
+    const retry = await askYesNo("Retry the test? (fix the Shortcut, then come back)", true);
+    if (!retry) {
+      console.log("  Skipping. Re-test later with: npx cibus-wolt webhook-url + manually trigger.");
+      return;
+    }
+  }
+}
+
+async function runWebhookOtpTest(env: EnvMap): Promise<boolean> {
+  let token: string;
+  let hostname: string;
+  try {
+    token = (await fs.readFile(paths.webhookToken, "utf8")).trim();
+    hostname = (await fs.readFile(paths.tunnelHostname, "utf8")).trim();
+  } catch {
+    console.log("  ⚠ Webhook token or tunnel hostname missing — can't test.");
+    return false;
+  }
+  if (!token || !hostname) {
+    console.log("  ⚠ Webhook token or tunnel hostname empty — can't test.");
+    return false;
+  }
+  const baseUrl = `https://${hostname}/webhook/${token}`;
+  // Set BEFORE the trigger: SMS fires mid-trigger so the POST may arrive
+  // before the function returns.
+  const since = Date.now() - 30_000;
+
+  console.log("");
+  console.log("  Make sure the OTP Automation in Shortcuts is saved and 'Run After");
+  console.log("  Confirmation' is OFF — otherwise iOS will silently swallow it.");
+  console.log("");
+
+  const fetchOtp = async (): Promise<string> => {
+    const deadline = Date.now() + 90_000;
+    while (Date.now() < deadline) {
+      try {
+        const res = await fetch(`${baseUrl}/last_otp?since=${since}`);
+        if (res.ok) {
+          const json = (await res.json()) as { last?: { code: string; receivedAt: number } | null };
+          if (json.last) return json.last.code;
+        }
+      } catch {
+        /* will retry */
+      }
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+    throw new Error("Timed out waiting for an OTP POST after 90s");
+  };
+
+  const result = await triggerCibusSmsAndSaveProfile(env, fetchOtp);
+  if (result.ok) {
+    console.log(`  ✓ OTP received via webhook: ${result.code}`);
+    console.log("  iOS Shortcut → ngrok → server round-trip works.");
+    console.log(`  ✓ Cibus profile saved at ${paths.chromeProfileCibus} — first drain skips login.`);
+    return true;
+  }
+  console.log("  Likely causes:");
+  console.log("    • iOS Shortcut not enabled, or 'Run After Confirmation' still on");
+  console.log("    • Shortcut filter doesn't match the actual SMS sender / wording");
+  console.log("    • ngrok hostname in Shortcut differs from current one");
+  console.log(`  Verify the URL: ${baseUrl}/otp`);
+  return false;
+}
+
+/**
+ * Run `fn` with the pino logger silenced. Pino's pretty transport interleaves
+ * with the wizard's clean console.log output during shortcut tests; silencing
+ * for the test window keeps the wizard readable.
+ */
+async function withSilencedLogger<T>(fn: () => Promise<T>): Promise<T> {
+  const { logger } = await import("../logger.ts");
+  const prev = logger.level;
+  logger.level = "silent";
+  try {
+    return await fn();
+  } finally {
+    logger.level = prev;
+  }
+}
+
+/**
+ * Shared between webhook + Gmail Shortcut tests: opens Cibus in the real
+ * chrome-profile-cibus (wiped first to force MFA), uses the OTP-only login
+ * tab to provoke an SMS, waits for `fetchOtp` to deliver the code from
+ * Gmail or the webhook, submits the code to complete the login, then closes.
+ * Side effect: the profile is now logged in, so the first real drain skips
+ * the login step entirely.
+ */
+async function triggerCibusSmsAndSaveProfile(
+  env: EnvMap,
+  fetchOtp: () => Promise<string>,
+): Promise<{ ok: boolean; code?: string }> {
+  if (!env.CIBUS_USER) {
+    console.log("  ⚠ CIBUS_USER missing from .env — can't auto-trigger SMS. Skipping.");
+    return { ok: false };
+  }
+  console.log("  Opening Cibus (OTP tab) — Chrome stays open until OTP arrives, then submits it.");
+  try {
+    const { triggerCibusSmsAndCompleteLogin } = await import("../cibus.ts");
+    const result = await triggerCibusSmsAndCompleteLogin(env.CIBUS_USER, fetchOtp);
+    if (!result.ok) {
+      console.log(`  ✗ ${result.reason}`);
+      return { ok: false, code: result.code };
+    }
+    return { ok: true, code: result.code };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.log(`  ✗ Failed: ${msg}`);
+    return { ok: false };
+  }
 }
 
 async function ensureTunnel(): Promise<void> {
@@ -388,27 +528,235 @@ async function stepGmail(env: EnvMap): Promise<void> {
   console.log("  2) OAuth consent screen → External → add yourself as Test User, scope gmail.readonly");
   console.log("  3) Credentials → Create OAuth Client ID → Desktop app");
   console.log("");
-  env.GOOGLE_CLIENT_ID = await ask("GOOGLE_CLIENT_ID", env.GOOGLE_CLIENT_ID);
-  env.GOOGLE_CLIENT_SECRET = await ask("GOOGLE_CLIENT_SECRET", env.GOOGLE_CLIENT_SECRET);
+
+  const envPath = path.join(paths.dir, ".env");
+  let authedClient: import("google-auth-library").OAuth2Client | null = null;
+  // Loop until we have credentials that successfully complete the OAuth flow
+  // and read the user's Gmail profile. Wrong client ID/secret or a closed
+  // consent browser would otherwise only surface during a real drain.
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    env.GOOGLE_CLIENT_ID = await ask("GOOGLE_CLIENT_ID", env.GOOGLE_CLIENT_ID);
+    env.GOOGLE_CLIENT_SECRET = await ask("GOOGLE_CLIENT_SECRET", env.GOOGLE_CLIENT_SECRET);
+    if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
+      console.log("  ⚠ Both ID and secret are required for Gmail polling. Re-enter or Ctrl-C to skip.");
+      continue;
+    }
+    // Persist before triggering the browser — token.json + refresh-token live
+    // separately, but config.ts reads credentials from .env.
+    await writeEnvFile(envPath, env);
+
+    console.log("");
+    console.log("  Verifying OAuth: a browser tab will open for Google consent.");
+    console.log("  Pick the Gmail account that receives Wolt + Cibus mail.");
+    try {
+      const { getAuthClient } = await import("../gmail.ts");
+      const { google } = await import("googleapis");
+      const client = await getAuthClient(env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET);
+      const gmail = google.gmail({ version: "v1", auth: client });
+      const profile = await gmail.users.getProfile({ userId: "me" });
+      console.log(`  ✓ Gmail OAuth verified — authorized as ${profile.data.emailAddress}`);
+      authedClient = client;
+      break;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.log(`  ✗ Gmail OAuth failed: ${msg}`);
+      // Wipe any stale cached token so the retry forces a fresh consent flow
+      // rather than re-trying a broken refresh token.
+      await fs.rm(paths.token, { force: true });
+      const retry = await askYesNo("  Re-enter credentials and retry?", true);
+      if (!retry) {
+        console.log("  Skipping Gmail verification. The next drain will retry the consent flow.");
+        return;
+      }
+    }
+  }
+
+  console.log("");
+  console.log("  Cibus OTPs arrive as SMS — Gmail polling can't see them directly.");
+  console.log("  To get fully unattended runs, set up the iOS Shortcut that forwards");
+  console.log("  the Cibus OTP SMS to Gmail with subject 'cibus-otp'. See README,");
+  console.log("  section: 'iOS Shortcut — forward Cibus SMS to Gmail'.");
+  console.log("  Without it: you'll be prompted in the terminal for the 6-digit code.");
+
+  if (authedClient) await testOtpShortcutGmail(env, authedClient);
 }
 
-async function stepWoltLogin(): Promise<void> {
-  title("First Wolt login");
-  console.log("  The first real `cibus-wolt run` opens Chrome with its dedicated profile");
-  console.log("  and walks through the Wolt magic-link login (Gmail, webhook, MCP, or");
-  console.log("  stdin — whichever input source you've configured).");
+async function testOtpShortcutGmail(env: EnvMap, auth: import("google-auth-library").OAuth2Client): Promise<void> {
   console.log("");
-  console.log("  Nothing to do here during setup. The next drain handles it.");
+  const doTest = await askYesNo("Test the SMS→Gmail Shortcut end-to-end now? (we trigger the SMS for you)", true);
+  if (!doTest) return;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const ok = await withSilencedLogger(() => runGmailOtpTest(env, auth));
+    if (ok) return;
+    const retry = await askYesNo("Retry the test? (fix the Shortcut, then come back)", true);
+    if (!retry) {
+      console.log("  Skipping. The drain itself will fall back to Gmail polling / terminal prompt.");
+      return;
+    }
+  }
+}
+
+async function runGmailOtpTest(env: EnvMap, auth: import("google-auth-library").OAuth2Client): Promise<boolean> {
+  console.log("");
+  console.log("  Make sure the SMS→Gmail Automation in Shortcuts is saved and 'Run");
+  console.log("  After Confirmation' is OFF — otherwise iOS will silently swallow it.");
+  console.log("");
+
+  // Set `since` BEFORE triggering: SMS fires mid-trigger, so the email may
+  // already be in Gmail by the time the trigger returns. Small back-buffer
+  // for clock skew between Gmail's internalDate and our local clock.
+  const since = new Date(Date.now() - 30_000);
+  const fetchOtp = async (): Promise<string> => {
+    const { fetchCibusOtp } = await import("../gmail.ts");
+    return await fetchCibusOtp({ auth, since, timeoutMs: 90_000, pollMs: 5_000 });
+  };
+
+  const result = await triggerCibusSmsAndSaveProfile(env, fetchOtp);
+  if (result.ok) {
+    console.log(`  ✓ OTP received via Gmail: ${result.code}`);
+    console.log("  iOS Shortcut → Gmail → server round-trip works.");
+    console.log(`  ✓ Cibus profile saved at ${paths.chromeProfileCibus} — first drain skips login.`);
+    return true;
+  }
+  console.log("  Likely causes:");
+  console.log("    • iOS Shortcut not enabled, or 'Run After Confirmation' still on");
+  console.log("    • Shortcut filter doesn't match the actual SMS sender / wording");
+  console.log("    • Email subject in the Shortcut isn't exactly 'cibus-otp'");
+  console.log("    • Shortcut sends to a different Gmail than the one you authorized");
+  return false;
+}
+
+async function stepWoltLogin(env: EnvMap): Promise<void> {
+  title("Wolt login test");
+  if (!env.WOLT_EMAIL) {
+    console.log("  Skipping — WOLT_EMAIL missing from .env.");
+    return;
+  }
+
+  // Detect available magic-link sources.
+  let auth: import("google-auth-library").OAuth2Client | null = null;
+  if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) {
+    const { tryLoadAuthClient } = await import("../gmail.ts");
+    auth = await tryLoadAuthClient(env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET);
+  }
+  let webhookBase: string | null = null;
+  try {
+    const token = (await fs.readFile(paths.webhookToken, "utf8")).trim();
+    const hostname = (await fs.readFile(paths.tunnelHostname, "utf8")).trim();
+    if (token && hostname) webhookBase = `https://${hostname}/webhook/${token}`;
+  } catch {
+    /* none */
+  }
+
+  if (!auth && !webhookBase) {
+    console.log("  No automated magic-link source (Gmail or webhook) configured.");
+    console.log("  Skipping the test. The first drain will prompt you to paste the URL");
+    console.log("  from your Wolt login email into the terminal.");
+    return;
+  }
+
+  const sources = [auth ? "Gmail" : null, webhookBase ? "webhook" : null].filter(Boolean).join(" + ");
+  console.log(`  Will open Wolt, auto-fill ${env.WOLT_EMAIL}, request magic-link, then poll`);
+  console.log(`  ${sources} until the link arrives. Side effect: chrome-profile saved so the`);
+  console.log(`  first real drain skips this step.`);
+  console.log("");
+
+  const doTest = await askYesNo("Test Wolt login now?", true);
+  if (!doTest) return;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const ok = await withSilencedLogger(() => runWoltLoginTest(env, auth, webhookBase));
+    if (ok) return;
+    const retry = await askYesNo("Retry the Wolt login test?", true);
+    if (!retry) {
+      console.log("  Skipping. The first drain will redo this.");
+      return;
+    }
+  }
+}
+
+async function runWoltLoginTest(
+  env: EnvMap,
+  auth: import("google-auth-library").OAuth2Client | null,
+  webhookBase: string | null,
+): Promise<boolean> {
+  const since = Date.now() - 30_000;
+  const fetchMagicLink = async (): Promise<string> => {
+    const sources: Promise<string>[] = [];
+    if (webhookBase) sources.push(pollWebhookMagicLink(webhookBase, since));
+    if (auth) sources.push(pollGmailMagicLinkForTest(auth, env.WOLT_EMAIL!, new Date(since)));
+    if (sources.length === 0) throw new Error("no magic-link sources available");
+    return await Promise.race(sources);
+  };
+
+  console.log("  Opening Wolt — auto-fill, request, wait for magic-link...");
+  try {
+    const { acquireBrowser } = await import("../browser.ts");
+    const { ensureWoltLoggedIn } = await import("../woltLogin.ts");
+    const browser = await acquireBrowser();
+    try {
+      const page = browser.context.pages()[0] ?? (await browser.context.newPage());
+      await ensureWoltLoggedIn({ page, email: env.WOLT_EMAIL!, fetchMagicLink });
+      console.log(`  ✓ Wolt logged in — chrome-profile saved at ${paths.chromeProfile}`);
+      return true;
+    } finally {
+      await browser.close();
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.log(`  ✗ ${msg}`);
+    return false;
+  }
+}
+
+async function pollWebhookMagicLink(baseUrl: string, since: number): Promise<string> {
+  const deadline = Date.now() + 10 * 60_000;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`${baseUrl}/last_magic_link?since=${since}`);
+      if (res.ok) {
+        const json = (await res.json()) as { last?: { url: string; receivedAt: number } | null };
+        if (json.last) return json.last.url;
+      }
+    } catch {
+      /* retry */
+    }
+    await new Promise((r) => setTimeout(r, 5000));
+  }
+  throw new Error("Webhook magic-link timeout (10m)");
+}
+
+async function pollGmailMagicLinkForTest(
+  auth: import("google-auth-library").OAuth2Client,
+  email: string,
+  since: Date,
+): Promise<string> {
+  const { fetchWoltMagicLink } = await import("../gmail.ts");
+  return fetchWoltMagicLink({ auth, since, expectEmail: email, timeoutMs: 10 * 60_000, pollMs: 10_000 });
 }
 
 async function stepSmokeTest(): Promise<void> {
   title("Smoke test");
   const run = await askYesNo("Run `cibus-wolt status` to verify everything?", true);
-  if (!run) return;
+  if (run) {
+    try {
+      execSync("npx cibus-wolt status", { stdio: "inherit" });
+    } catch {
+      console.log("  Status command failed — inspect the output above.");
+    }
+  }
+
+  console.log("");
+  const dry = await askYesNo("Run a dry-run drain now? (full flow except final payment confirm)", true);
+  if (!dry) return;
   try {
-    execSync("npx cibus-wolt status", { stdio: "inherit" });
+    execSync("npx cibus-wolt run --dry-run", { stdio: "inherit" });
   } catch {
-    console.log("  Status command failed — inspect the output above.");
+    console.log("  Dry-run errored — inspect the output above.");
   }
 }
 
@@ -456,8 +804,8 @@ export async function runSetupCommand(): Promise<void> {
 
   await writeEnvFile(envPath, env);
 
+  await stepWoltLogin(env);
   await stepSchedules();
-  await stepWoltLogin();
   await stepSmokeTest();
   printDone();
 }

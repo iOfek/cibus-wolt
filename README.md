@@ -150,9 +150,8 @@ By default the drain spends your full available balance. Pass `"amount": 50` to 
 
 1. iPhone Shortcuts app → **Automation** tab → **+** → **Message**.
 2. Filter: **Sender** is your Cibus SMS sender (e.g. Pluxee) **and** **Message** contains `קוד האימות`. That alone scopes it to OTP SMS — no regex needed.
-3. Action 1: **Get Numbers from Input** (returns the 6-digit code).
-4. Action 2: **Get Contents of URL** — method POST, URL `https://<name>.ngrok-free.app/webhook/<token>/otp`, headers `Content-Type: application/json`, Request Body (JSON): `{"code": <Numbers>}`.
-5. Turn off "Run After Confirmation" so it fires silently.
+3. Action: **Get Contents of URL** — method POST, URL `https://<name>.ngrok-free.app/webhook/<token>/otp`, headers `Content-Type: application/json`, Request Body (JSON): `{"code": <Message>}`. The server extracts the 6-digit code from the raw SMS text.
+4. Turn off "Run After Confirmation" so it fires silently.
 
 **iOS Shortcut — Wolt magic-link forwarder:**
 
@@ -225,9 +224,8 @@ Needed for paths **(b)** and **(d)** if you want OTPs fully automatic. Cibus OTP
 
 1. Shortcuts → **Automation** → **+** → **Message**.
 2. Filter: **Sender** is your Cibus SMS sender (e.g. Pluxee) **and** **Message** contains `קוד האימות`.
-3. Action 1: **Get Numbers from Input**.
-4. Action 2: **Send Email** — to your own Gmail, subject `cibus-otp`, body `<Numbers>`.
-5. Turn off "Run After Confirmation".
+3. Action: **Send Email** — to your own Gmail, subject `cibus-otp`, body `<Message>`. The server extracts the 6-digit code from the raw SMS text.
+4. Turn off "Run After Confirmation".
 
 Without this, OTP delivery is manual: Claude will ask you for the 6 digits in chat, or the terminal will prompt you.
 

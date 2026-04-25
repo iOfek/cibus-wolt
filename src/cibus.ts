@@ -341,3 +341,107 @@ async function clickEnabled(page: Page, selectors: string[], label: string): Pro
   }
   throw new Error(`No clickable ${label} within 15s (tried: ${selectors.join(", ")})`);
 }
+
+/**
+ * Open Cibus in the real chrome-profile-cibus, switch to the OTP-only tab,
+ * submit username + click 'send code' to provoke an SMS, then wait for the
+ * caller's `fetchOtp` to deliver the code (typically via Gmail/webhook
+ * polling). Submits the code, waits for login redirect, closes — leaving
+ * a logged-in profile so the first real drain skips the login step.
+ *
+ * Always wipes the profile beforehand so MFA fires unconditionally
+ * (cached device trust would skip it). OTP mode is used over password+MFA
+ * to guarantee an SMS regardless of trust state.
+ */
+export async function triggerCibusSmsAndCompleteLogin(
+  username: string,
+  fetchOtp: () => Promise<string>,
+): Promise<{ ok: boolean; reason: string; code?: string }> {
+  // Wipe so the login is fresh and SMS fires unconditionally.
+  await fs.rm(paths.chromeProfileCibus, { recursive: true, force: true });
+  await fs.mkdir(paths.chromeProfileCibus, { recursive: true });
+
+  let ctx: BrowserContext | null = null;
+  try {
+    ctx = await chromium.launchPersistentContext(paths.chromeProfileCibus, {
+      headless: false,
+      viewport: { width: 1280, height: 900 },
+      locale: "he-IL",
+      args: ["--disable-blink-features=AutomationControlled"],
+    });
+    const page = ctx.pages()[0] ?? (await ctx.newPage());
+
+    await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" });
+    await page.waitForTimeout(1500);
+
+    // Switch to the one-time-code tab — always sends an SMS, regardless of trust.
+    const otpTab = page
+      .locator('.tab.code, div.tab.code, [class*="tab"]:has-text("קוד חד פעמי"), [role="tab"]:has-text("קוד חד פעמי")')
+      .first();
+    await otpTab.waitFor({ state: "visible", timeout: 15_000 });
+    await otpTab.click();
+    await page.waitForTimeout(600);
+
+    await fillVisible(
+      page,
+      ["input#user", "input#firstInput", 'input[autocomplete="username"]', 'input[type="email"]'],
+      username,
+      "username",
+    );
+    await page.keyboard.press("Tab");
+    await page.waitForTimeout(500);
+
+    await clickEnabled(
+      page,
+      [
+        'button.cib-btn:has-text("שנמשיך")',
+        'button:has-text("שנמשיך")',
+        'button.cib-btn:has-text("שלח")',
+      ],
+      "send-otp",
+    );
+
+    // OTP-input field appearing = SMS was sent.
+    await page.waitForTimeout(3000);
+    const otpField = await detectMfaField(page);
+    if (!otpField) {
+      return { ok: false, reason: "no OTP input — likely bad username or unexpected page state" };
+    }
+
+    // Hand off to caller to fetch the code (Gmail / webhook poll).
+    let code: string;
+    try {
+      code = await fetchOtp();
+    } catch (e) {
+      return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+    }
+
+    await otpField.fill(code);
+    await page.keyboard.press("Tab");
+    await page.waitForTimeout(300);
+    await clickEnabled(
+      page,
+      [
+        'button.cib-btn:has-text("אישור")',
+        'button.cib-btn:has-text("כניסה")',
+        'button.cib-btn:has-text("שלח")',
+        'button.cib-btn:has-text("אימות")',
+        'button:has-text("Submit")',
+        'button.cib-btn',
+      ],
+      "otp-submit",
+    );
+
+    // Login redirect away from /login = success.
+    await page
+      .waitForFunction(() => !window.location.pathname.includes("/login"), { timeout: 30_000 })
+      .catch(() => {});
+    await page.waitForTimeout(2000);
+    if (page.url().includes("/login")) {
+      return { ok: false, reason: "login did not complete — OTP may have been wrong", code };
+    }
+    return { ok: true, reason: "login complete, profile saved", code };
+  } finally {
+    await ctx?.close();
+  }
+}

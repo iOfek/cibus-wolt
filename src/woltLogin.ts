@@ -25,16 +25,23 @@ export async function ensureWoltLoggedIn(opts: WoltLoginOpts): Promise<void> {
     return;
   }
 
-  logger.info("No Wolt session — opening login page for manual email submit");
+  logger.info("No Wolt session — opening login page");
   await page.goto("https://wolt.com/en/me/login", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1500);
   await dismissWoltOverlays(page);
 
   const sentAt = new Date();
+  const autoFilled = await fillEmailAndSubmit(page, email);
 
-  logger.warn("👉 ACTION NEEDED: In the visible browser, enter your email and click the 'Continue' / 'Send' button on the Wolt login form.");
-  logger.warn(`   Expected email: ${email}`);
-  logger.warn("   I'll poll Gmail every 10s (up to 10 minutes) and continue automatically when the magic-link email arrives. Do NOT click the link — just send the email.");
+  if (autoFilled) {
+    logger.info(`Wolt email auto-filled and submitted: ${email}`);
+  } else {
+    // Fall back to manual: only path here is when our selectors miss a UI
+    // change. The user types email + clicks Continue in the visible browser.
+    logger.warn("👉 Auto-fill failed (selectors may be stale). Enter email + click Continue in the visible browser.");
+    logger.warn(`   Expected email: ${email}`);
+  }
+  logger.info("   Awaiting magic-link delivery (Gmail / webhook / MCP / stdin) — up to 10 minutes.");
 
   let magicUrl: string;
   if (opts.fetchMagicLink) {
@@ -63,6 +70,40 @@ export async function ensureWoltLoggedIn(opts: WoltLoginOpts): Promise<void> {
     throw new Error("Magic-link navigation did not produce a logged-in session");
   }
   logger.info("Wolt login complete");
+}
+
+async function fillEmailAndSubmit(page: Page, email: string): Promise<boolean> {
+  try {
+    const emailField = page
+      .locator('input[type="email"], input[name="email"], input[autocomplete="email"], input[placeholder*="email" i]')
+      .first();
+    await emailField.waitFor({ state: "visible", timeout: 10_000 });
+
+    // Real keystrokes — Wolt's React form enables the submit button based on
+    // input events. .fill() can set the value without triggering onChange,
+    // leaving the button disabled.
+    await emailField.click();
+    await emailField.fill("");
+    await emailField.pressSequentially(email, { delay: 30 });
+    await page.waitForTimeout(800);
+
+    // Stable Wolt selector — Aalto design system uses data-test-id attributes.
+    const continueBtn = page.locator('button[data-test-id="StepMethodSelect.NextButton"]').first();
+    try {
+      await continueBtn.waitFor({ state: "visible", timeout: 5_000 });
+      // Playwright's .click() waits for the button to be enabled (Wolt's React
+      // form disables it until the email validates as well-formed).
+      await continueBtn.click({ timeout: 10_000 });
+      return true;
+    } catch {
+      logger.debug("Wolt Continue button not clickable — falling back to Enter key");
+      await emailField.press("Enter");
+      return true;
+    }
+  } catch (e) {
+    logger.warn({ err: e instanceof Error ? e.message : String(e) }, "Wolt email auto-fill failed");
+    return false;
+  }
 }
 
 async function isLoggedIn(page: Page): Promise<boolean> {

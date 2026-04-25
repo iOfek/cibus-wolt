@@ -31,9 +31,14 @@ async function ask(prompt: string, def?: string): Promise<string> {
 
 async function askYesNo(prompt: string, defaultYes: boolean): Promise<boolean> {
   const def = defaultYes ? "Y/n" : "y/N";
-  const ans = (await ask(`${prompt} (${def})`)).toLowerCase();
-  if (ans === "") return defaultYes;
-  return ans === "y" || ans === "yes";
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const ans = (await ask(`${prompt} (${def})`)).toLowerCase();
+    if (ans === "") return defaultYes;
+    if (ans === "y" || ans === "yes") return true;
+    if (ans === "n" || ans === "no") return false;
+    console.log(`  Please answer y or n (got: "${ans}").`);
+  }
 }
 
 function formatNextFire(s: Schedule, cadence: Cadence): string {
@@ -325,8 +330,27 @@ export async function runScheduleSetupStep(): Promise<void> {
   }
 
   console.log("");
-  console.log("  Schedules fire only while the background MCP service is running.");
-  console.log("  If you haven't already: npm run install-bg");
+  await ensureBackgroundServicesInstalled();
+}
+
+async function ensureBackgroundServicesInstalled(): Promise<void> {
+  const { bothServicesInstalled } = await import("../services.ts");
+  if (bothServicesInstalled()) {
+    console.log("  ✓ Background services already running — schedules will fire as configured.");
+    return;
+  }
+  console.log("  Schedules only fire while the background MCP service is running.");
+  const install = await askYesNo("  Install background services now? (auto-start on login)", true);
+  if (!install) {
+    console.log("  Skipped. Install later with: npm run install-bg");
+    return;
+  }
+  try {
+    const { execSync } = await import("node:child_process");
+    execSync("npm run install-bg", { stdio: "inherit" });
+  } catch {
+    console.log("  install-bg failed. Retry later: npm run install-bg");
+  }
 }
 
 function suggestedSchedule(cadence: Cadence): Schedule {

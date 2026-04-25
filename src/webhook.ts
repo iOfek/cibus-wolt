@@ -56,6 +56,12 @@ interface TunnelUrlSource {
   readCurrentUrl: () => Promise<string | null>;
 }
 
+// In-memory record of the last OTP / magic-link POST received, regardless of
+// whether a drain was waiting. Used by `cibus-wolt setup`'s end-to-end iOS
+// Shortcut tests.
+let lastReceivedOtp: { code: string; receivedAt: number } | null = null;
+let lastReceivedMagicLink: { url: string; receivedAt: number } | null = null;
+
 export function createWebhookRouter(token: string, tunnelUrlSource?: TunnelUrlSource): Router {
   const router = createRouter();
   router.use("/:token", requireTokenMatch(token));
@@ -79,13 +85,25 @@ export function createWebhookRouter(token: string, tunnelUrlSource?: TunnelUrlSo
   }) as any);
 
   router.post("/:token/otp", ((req: Request, res: Response) => {
-    const code = String(req.body?.code ?? "").trim();
-    if (!/^\d{4,8}$/.test(code)) {
-      res.status(400).json({ error: "invalid_code" });
+    const raw = String(req.body?.code ?? "");
+    const match = raw.match(/\d{6}/);
+    if (!match) {
+      res.status(400).json({ error: "invalid_code", detail: "no 6-digit code found in payload" });
       return;
     }
-    const accepted = submit("otp", code);
+    lastReceivedOtp = { code: match[0], receivedAt: Date.now() };
+    const accepted = submit("otp", match[0]);
     res.json({ accepted, message: accepted ? "OTP delivered" : "No active OTP wait" });
+  }) as any);
+
+  router.get("/:token/last_otp", ((req: Request, res: Response) => {
+    const sinceParam = req.query?.since;
+    const since = typeof sinceParam === "string" ? Number(sinceParam) : 0;
+    if (lastReceivedOtp && lastReceivedOtp.receivedAt > since) {
+      res.json({ last: lastReceivedOtp });
+      return;
+    }
+    res.json({ last: null });
   }) as any);
 
   router.post("/:token/magic_link", ((req: Request, res: Response) => {
@@ -94,8 +112,19 @@ export function createWebhookRouter(token: string, tunnelUrlSource?: TunnelUrlSo
       res.status(400).json({ error: "invalid_url", expected: "https://wolt.com/me/magic_login?..." });
       return;
     }
+    lastReceivedMagicLink = { url, receivedAt: Date.now() };
     const accepted = submit("magic_link", url);
     res.json({ accepted, message: accepted ? "Magic link delivered" : "No active magic-link wait" });
+  }) as any);
+
+  router.get("/:token/last_magic_link", ((req: Request, res: Response) => {
+    const sinceParam = req.query?.since;
+    const since = typeof sinceParam === "string" ? Number(sinceParam) : 0;
+    if (lastReceivedMagicLink && lastReceivedMagicLink.receivedAt > since) {
+      res.json({ last: lastReceivedMagicLink });
+      return;
+    }
+    res.json({ last: null });
   }) as any);
 
   router.post("/:token/ack", ((_req: Request, res: Response) => {
