@@ -11,7 +11,10 @@ async function dismissCookieBanner(page: Page): Promise<void> {
   // Then poll a wide set of selectors covering Wolt's own banner, OneTrust,
   // Cookiebot, and Hebrew/English variants.
   const candidates = [
-    // Wolt's own (Aalto)
+    // Wolt's own banner — exact attributes (most reliable)
+    'button[data-test-id="allow-button"]',
+    'button[data-localization-key="gdpr-consents.banner.accept-button"]',
+    // Wolt's own (Aalto) — fuzzy
     'button[data-test-id*="cookie" i]',
     'button[data-localization-key*="cookie" i]',
     '[data-localization-key*="cookie" i] button',
@@ -42,6 +45,10 @@ async function dismissCookieBanner(page: Page): Promise<void> {
     '[class*="al-Button"]:has-text("Use only necessary")',
   ];
 
+  // Buttons we must NEVER click even if a generic selector matches them —
+  // these open settings dialogs instead of accepting/dismissing.
+  const avoidTextRegex = /^(manage|settings|customise|customize|preferences|הגדרות|נהל)$/i;
+
   // Up to 3 attempts with 500ms gaps — cookie banner may render slightly after
   // our first call, especially after a fresh-profile launch.
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -52,8 +59,10 @@ async function dismissCookieBanner(page: Page): Promise<void> {
         const el = loc.nth(i);
         try {
           if (!(await el.isVisible({ timeout: 200 }))) continue;
+          const label = (await el.innerText({ timeout: 200 }).catch(() => "")).trim();
+          if (avoidTextRegex.test(label)) continue;
           await el.click({ timeout: 2000 });
-          logger.debug({ sel, index: i, attempt }, "Dismissed cookie banner");
+          logger.debug({ sel, index: i, attempt, label }, "Dismissed cookie banner");
           await page.waitForTimeout(500);
           return;
         } catch {
