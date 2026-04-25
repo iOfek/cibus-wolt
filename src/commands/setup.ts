@@ -669,7 +669,10 @@ async function stepWoltLogin(env: EnvMap): Promise<void> {
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const ok = await withSilencedLogger(() => runWoltLoginTest(env, auth, webhookBase));
+    // Don't silence the logger here — this step can wait up to 10 minutes
+    // for the magic-link email, and the user needs to see which message was
+    // picked and whether the browser-confirm challenge fired.
+    const ok = await runWoltLoginTest(env, auth, webhookBase);
     if (ok) return;
     const retry = await askYesNo("Retry the Wolt login test?", true);
     if (!retry) {
