@@ -24,6 +24,11 @@ export async function ensureWoltLoggedIn(opts: WoltLoginOpts): Promise<void> {
   // Wolt's bot detection on Windows.
   if (await hasWoltSessionCookie(page)) {
     logger.info("Wolt session cookie present — skipping login");
+    // Best-effort keep-alive: one authenticated page hit nudges Wolt's
+    // sliding-window session forward and the new Set-Cookie is persisted
+    // to the Chrome profile. Failures are non-fatal — the cookie was
+    // already valid; the drain can proceed without the refresh.
+    await refreshWoltSession(page);
     return;
   }
 
@@ -46,6 +51,15 @@ export async function ensureWoltLoggedIn(opts: WoltLoginOpts): Promise<void> {
     );
   }
   logger.info("✓ Wolt session cookie present — login confirmed");
+}
+
+async function refreshWoltSession(page: Page): Promise<void> {
+  try {
+    await page.goto("https://wolt.com/en/me", { waitUntil: "domcontentloaded", timeout: 10_000 });
+    logger.debug("Wolt session keep-alive hit /me");
+  } catch (e) {
+    logger.debug({ err: e instanceof Error ? e.message : String(e) }, "Wolt session keep-alive skipped");
+  }
 }
 
 /**
