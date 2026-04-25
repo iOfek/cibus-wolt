@@ -49,6 +49,7 @@ function showHelp(): void {
       "  stable-tunnel      Set up ngrok with a free static domain (stable URL).",
       "  devtunnel-setup    Set up Azure Dev Tunnels (Microsoft) — alternative when ngrok is blocked.",
       "  setup              Interactive first-time setup wizard. Re-run to edit values.",
+      "  wolt-login         Open Chrome to log in to Wolt manually (session expired).",
       "  claude-setup       Claude-MCP-only setup (skips phone webhook prompts).",
       "  schedule <sub>     Manage recurring drain schedules (list|add|edit|remove|enable|disable|cadence).",
       "  help               Show this help.",
@@ -113,6 +114,11 @@ async function main(): Promise<void> {
     case "setup": {
       const { runSetupCommand } = await import("../commands/setup.ts");
       await runSetupCommand();
+      break;
+    }
+    case "wolt-login": {
+      const { runWoltLoginCommand } = await import("../commands/wolt-login.ts");
+      await runWoltLoginCommand();
       break;
     }
     case "claude-setup": {

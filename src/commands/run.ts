@@ -83,7 +83,7 @@ export async function runDrainCommand(opts: DrainOpts = {}): Promise<void> {
   const woltStatus = await checkWoltSession();
   logger.info(woltStatus.ok
     ? `✓ ${woltStatus.summary} (skipping login unless expired)`
-    : `→ will request magic link (${woltStatus.reason})`);
+    : `→ Wolt session expired (${woltStatus.reason}) — run \`cibus-wolt wolt-login\` to re-authenticate`);
 
   // Phase 4: Balance
   logPhaseBanner(4, 5, "Balance fetch");

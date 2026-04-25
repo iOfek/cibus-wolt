@@ -303,7 +303,7 @@ async function stepChromeCheck(): Promise<void> {
   console.log(`  ✓ Found Chrome at ${chromeBin}`);
   console.log("  Each drain launches Chrome with a dedicated profile at");
   console.log(`    ${paths.chromeProfile}`);
-  console.log("  First run prompts a Wolt magic-link login; subsequent runs reuse the session.");
+  console.log("  First run prompts a manual Wolt login; subsequent runs reuse the session cookie.");
 }
 
 async function stepWebhook(env: EnvMap, claudeWasSetup: boolean): Promise<void> {
@@ -630,81 +630,45 @@ async function runGmailOtpTest(env: EnvMap, auth: import("google-auth-library").
 }
 
 async function stepWoltLogin(env: EnvMap): Promise<void> {
-  title("Wolt login test");
+  title("Wolt login");
   if (!env.WOLT_EMAIL) {
     console.log("  Skipping — WOLT_EMAIL missing from .env.");
     return;
   }
 
-  // Detect available magic-link sources.
-  let auth: import("google-auth-library").OAuth2Client | null = null;
-  if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) {
-    const { tryLoadAuthClient } = await import("../gmail.ts");
-    auth = await tryLoadAuthClient(env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET);
-  }
-  let webhookBase: string | null = null;
-  try {
-    const token = (await fs.readFile(paths.webhookToken, "utf8")).trim();
-    const hostname = (await fs.readFile(paths.tunnelHostname, "utf8")).trim();
-    if (token && hostname) webhookBase = `https://${hostname}/webhook/${token}`;
-  } catch {
-    /* none */
-  }
-
-  if (!auth && !webhookBase) {
-    console.log("  No automated magic-link source (Gmail or webhook) configured.");
-    console.log("  Skipping the test. The first drain will prompt you to paste the URL");
-    console.log("  from your Wolt login email into the terminal.");
+  console.log("  Wolt's bot detection rejects automated email submission, so we hand the");
+  console.log("  browser to you for one manual login. The session cookie is saved to the");
+  console.log("  Chrome profile and reused on every subsequent drain (auto-refreshed each");
+  console.log("  run). When the cookie eventually expires, run `cibus-wolt wolt-login`.");
+  console.log("");
+  const doTest = await askYesNo("Open Chrome and log in to Wolt now?", true);
+  if (!doTest) {
+    console.log("  Skipping. Run `cibus-wolt wolt-login` later (or the first drain will prompt).");
     return;
   }
 
-  const sources = [auth ? "Gmail" : null, webhookBase ? "webhook" : null].filter(Boolean).join(" + ");
-  console.log(`  Will open Wolt, auto-fill ${env.WOLT_EMAIL}, request magic-link, then poll`);
-  console.log(`  ${sources} until the link arrives. Side effect: chrome-profile saved so the`);
-  console.log(`  first real drain skips this step.`);
-  console.log("");
-
-  const doTest = await askYesNo("Test Wolt login now?", true);
-  if (!doTest) return;
-
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    // Don't silence the logger here — this step can wait up to 10 minutes
-    // for the magic-link email, and the user needs to see which message was
-    // picked and whether the browser-confirm challenge fired.
-    const ok = await runWoltLoginTest(env, auth, webhookBase);
+    const ok = await runWoltLoginTest(env);
     if (ok) return;
-    const retry = await askYesNo("Retry the Wolt login test?", true);
+    const retry = await askYesNo("Retry the Wolt login?", true);
     if (!retry) {
-      console.log("  Skipping. The first drain will redo this.");
+      console.log("  Skipping. Run `cibus-wolt wolt-login` later when you're ready.");
       return;
     }
   }
 }
 
-async function runWoltLoginTest(
-  env: EnvMap,
-  auth: import("google-auth-library").OAuth2Client | null,
-  webhookBase: string | null,
-): Promise<boolean> {
-  const since = Date.now() - 30_000;
-  const fetchMagicLink = async (): Promise<string> => {
-    const sources: Promise<string>[] = [];
-    if (webhookBase) sources.push(pollWebhookMagicLink(webhookBase, since));
-    if (auth) sources.push(pollGmailMagicLinkForTest(auth, env.WOLT_EMAIL!, new Date(since)));
-    if (sources.length === 0) throw new Error("no magic-link sources available");
-    return await Promise.race(sources);
-  };
-
-  console.log("  Opening Wolt — auto-fill, request, wait for magic-link...");
+async function runWoltLoginTest(env: EnvMap): Promise<boolean> {
+  console.log("  Opening Wolt login page in Chrome — sign in manually, then press Enter here...");
   try {
     const { acquireBrowser } = await import("../browser.ts");
     const { ensureWoltLoggedIn } = await import("../woltLogin.ts");
     const browser = await acquireBrowser();
     try {
       const page = browser.context.pages()[0] ?? (await browser.context.newPage());
-      await ensureWoltLoggedIn({ page, email: env.WOLT_EMAIL!, fetchMagicLink });
-      console.log(`  ✓ Wolt logged in — chrome-profile saved at ${paths.chromeProfile}`);
+      await ensureWoltLoggedIn({ page, email: env.WOLT_EMAIL! });
+      console.log(`  ✓ Wolt session saved at ${paths.chromeProfile}`);
       return true;
     } finally {
       await browser.close();
