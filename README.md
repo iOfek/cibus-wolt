@@ -92,7 +92,7 @@ You run drains from your laptop's terminal. Nothing else.
 
 ```sh
 npx cibus-wolt setup
-# → answer Cibus/Wolt creds + Wolt email
+# → answer Cibus creds
 # → say NO to webhook, NO to Claude MCP, NO to Gmail
 npx cibus-wolt run
 ```
@@ -109,7 +109,7 @@ You want to trigger drains from your phone and have your iPhone Shortcut deliver
 
 ```sh
 npx cibus-wolt setup
-# → answer Cibus/Wolt creds + Wolt email
+# → answer Cibus creds
 # → YES to phone webhook
 # → wizard walks through ngrok install + free static domain (see below)
 ```

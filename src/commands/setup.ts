@@ -125,7 +125,6 @@ async function stepClaude(env: EnvMap, mode: Mode): Promise<boolean> {
   if (mode === "claude-only") {
     console.log("  Configuring the MCP connector for Claude.");
   } else {
-    console.log("  Claude's Gmail integration reads the Wolt magic-link email directly.");
     console.log("  Cibus OTPs are SMS — Claude can't read those. You either:");
     console.log("    • type the 6 digits into the Claude chat when prompted, or");
     console.log("    • set up the iOS Shortcut that forwards Cibus SMS to Gmail");
@@ -347,14 +346,11 @@ async function stepWebhook(env: EnvMap, claudeWasSetup: boolean): Promise<void> 
   }
 
   console.log("");
-  console.log("  Phone Shortcut setup (iOS) — required for OTP/magic-link delivery:");
-  console.log("    OTP:        Automation → Message (filter Pluxee + 'קוד האימות')");
-  console.log("                → Get Contents of URL (POST)");
-  console.log(`                → https://<your-ngrok-domain>/webhook/<token>/otp`);
-  console.log("                → Body JSON: {\"code\": <Message>}  (server extracts digits)");
-  console.log("    Magic link: Automation → Email (filter 'your login link')");
-  console.log("                → Get URLs from Input → POST to /webhook/<token>/magic_link");
-  console.log("                → Body: {\"url\": <URLs>}");
+  console.log("  Phone Shortcut setup (iOS) — required for OTP delivery:");
+  console.log("    OTP: Automation → Message (filter Pluxee + 'קוד האימות')");
+  console.log("         → Get Contents of URL (POST)");
+  console.log(`         → https://<your-ngrok-domain>/webhook/<token>/otp`);
+  console.log("         → Body JSON: {\"code\": <Message>}  (server extracts digits)");
   console.log("  Full step-by-step in README, section 'CLI + phone webhook (ngrok)'.");
   console.log("  Get the exact URLs anytime: npx cibus-wolt webhook-url");
 
@@ -674,32 +670,6 @@ async function runWoltLoginTest(env: EnvMap): Promise<boolean> {
   }
 }
 
-async function pollWebhookMagicLink(baseUrl: string, since: number): Promise<string> {
-  const deadline = Date.now() + 10 * 60_000;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(`${baseUrl}/last_magic_link?since=${since}`);
-      if (res.ok) {
-        const json = (await res.json()) as { last?: { url: string; receivedAt: number } | null };
-        if (json.last) return json.last.url;
-      }
-    } catch {
-      /* retry */
-    }
-    await new Promise((r) => setTimeout(r, 5000));
-  }
-  throw new Error("Webhook magic-link timeout (10m)");
-}
-
-async function pollGmailMagicLinkForTest(
-  auth: import("google-auth-library").OAuth2Client,
-  email: string,
-  since: Date,
-): Promise<string> {
-  const { fetchWoltMagicLink } = await import("../gmail.ts");
-  return fetchWoltMagicLink({ auth, since, expectEmail: email, timeoutMs: 10 * 60_000, pollMs: 10_000 });
-}
-
 async function stepSmokeTest(): Promise<void> {
   title("Smoke test");
   const run = await askYesNo("Run `cibus-wolt status` to verify everything?", true);
@@ -818,17 +788,17 @@ async function detectExisting(env: EnvMap): Promise<{
 }
 
 async function stepStrategy(env: EnvMap): Promise<Strategy> {
-  title("How should we get OTP + magic-link into the tool?");
-  console.log("  Two things may need to be fed to the automation occasionally:");
-  console.log("    • Cibus SMS OTP (6-digit code, when re-auth is forced)");
-  console.log("    • Wolt magic-link URL (login email, after session expiry)");
+  title("How should we get the Cibus OTP into the tool?");
+  console.log("  Cibus forces a re-auth occasionally — a 6-digit code SMS'd to your phone.");
+  console.log("  We need that code on the laptop. (Wolt login is one-time manual via");
+  console.log("  `cibus-wolt wolt-login` — the session cookie auto-refreshes on every drain.)");
   console.log("");
   console.log("  Four possible sources. First to respond wins; you can use multiple.");
   console.log("");
   console.log("    (a) Terminal prompt          — works only when you're at laptop. Zero setup.");
   console.log("    (b) Gmail OAuth (polling)    — requires Gmail + one-time GCP project.");
   console.log("    (c) Phone webhook (ngrok)    — requires ngrok free signup + iOS Shortcut.");
-  console.log("    (d) Claude MCP               — Claude's own Gmail integration delivers them.");
+  console.log("    (d) Claude MCP               — Claude's Gmail integration reads forwarded SMS.");
   console.log("                                   Claude.ai web also needs ngrok.");
   console.log("");
 
@@ -845,7 +815,7 @@ async function stepStrategy(env: EnvMap): Promise<Strategy> {
   let claudeHasGmail = false;
   if (usesClaude) {
     claudeHasGmail = await askYesNo(
-      "  …and does your Claude have the Gmail integration connected?\n  (Lets Claude read the Wolt magic-link email + Cibus OTP if forwarded to Gmail.)",
+      "  …and does your Claude have the Gmail integration connected?\n  (Lets Claude read the Cibus OTP if you forward it to Gmail with subject 'cibus-otp'.)",
       true,
     );
   }
@@ -854,9 +824,9 @@ async function stepStrategy(env: EnvMap): Promise<Strategy> {
     existing.webhookConfigured || existing.claudeConfigured || false,
   );
   const hasGmail = usesClaude && claudeHasGmail
-    ? false // no need for separate Gmail OAuth — Claude's Gmail covers signal delivery
+    ? false // no need for separate Gmail OAuth — Claude's Gmail covers OTP delivery
     : await askYesNo(
-        "Set up Gmail OAuth (one-time GCP client) for OTP/magic-link polling on our side?",
+        "Set up Gmail OAuth (one-time GCP client) for OTP polling on our side?",
         existing.gmailConfigured || false,
       );
 
@@ -867,27 +837,25 @@ async function stepStrategy(env: EnvMap): Promise<Strategy> {
   let rationale = "";
 
   if (usesClaude && claudeHasGmail) {
-    rationale = "Using Claude (Gmail connected) — Claude reads the Wolt magic-link email directly.";
-    rationale += "\n  Cibus OTPs arrive as SMS. You either type the 6 digits in chat when Claude asks,";
-    rationale += "\n  or add an iOS Shortcut that forwards Cibus SMS to Gmail (subject 'cibus-otp').";
+    rationale = "Using Claude (Gmail connected) — Cibus OTPs arrive as SMS, so you either";
+    rationale += "\n  type the 6 digits in chat when Claude asks, or add an iOS Shortcut that";
+    rationale += "\n  forwards Cibus SMS to Gmail (subject 'cibus-otp') for fully-unattended runs.";
     if (wantsRemote) rationale += "\n  Web Claude.ai also needs ngrok, which the Claude step handles.";
   } else if (usesClaude && !claudeHasGmail) {
     useWebhook = true;
-    rationale = "Using Claude (no Gmail) — Claude orchestrates, but signals can't go through Gmail.";
-    rationale += "\n  Turning ON the phone webhook — iOS Shortcuts forward Cibus SMS + Wolt email";
-    rationale += "\n  to ngrok, which our server feeds back to Claude via the same input bus.";
+    rationale = "Using Claude (no Gmail) — Claude orchestrates, but the OTP can't go through Gmail.";
+    rationale += "\n  Turning ON the phone webhook — an iOS Shortcut forwards the Cibus SMS to";
+    rationale += "\n  ngrok, which our server feeds back to Claude via the same input bus.";
   } else if (wantsRemote) {
     useWebhook = true;
     rationale = "No Claude + want remote trigger → phone webhook via ngrok is the best fit.";
-    rationale += "\n  iOS Shortcuts forward both Cibus SMS and Wolt mail to the webhook.";
+    rationale += "\n  iOS Shortcut forwards the Cibus SMS to the webhook.";
   } else if (hasGmail) {
     rationale = "Local-only + Gmail available → Gmail polling gives fully-unattended local runs.";
-    rationale += "\n  Needs an iOS Shortcut to forward Cibus SMS OTPs to Gmail. Wolt mail";
-    rationale += "\n  hits Gmail natively so no extra routing for that one.";
+    rationale += "\n  Needs an iOS Shortcut to forward Cibus SMS OTPs to Gmail (subject 'cibus-otp').";
   } else {
     rationale = "Local-only, no Gmail → terminal prompts work fine. No additional setup needed.";
-    rationale += "\n  You'll read the Cibus OTP off your phone and type it in the terminal,";
-    rationale += "\n  and paste the Wolt magic-link URL from your email when prompted.";
+    rationale += "\n  You'll read the Cibus OTP off your phone and type it in the terminal.";
   }
 
   console.log("");
