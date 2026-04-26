@@ -115,7 +115,6 @@ async function doLogin(
   auth?: OAuth2Client,
   fetchOtpOverride?: () => Promise<string>,
 ): Promise<void> {
-  const loginStartedAt = new Date();
   if (!page.url().includes("/login")) {
     await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(1500);
@@ -156,7 +155,8 @@ async function doLogin(
   await ensureRememberMe(page);
   await shot("04-password");
 
-  // Step 2 login
+  // Step 2 login — triggers SMS if MFA is required
+  const otpSubmittedAt = new Date();
   await clickEnabled(
     page,
     [
@@ -186,7 +186,7 @@ async function doLogin(
       try {
         code = await fetchCibusOtp({
           auth,
-          since: new Date(loginStartedAt.getTime() - 30_000),
+          since: otpSubmittedAt,
           timeoutMs: 90_000,
           pollMs: 5_000,
         });

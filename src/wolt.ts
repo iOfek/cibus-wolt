@@ -285,7 +285,7 @@ async function signInWithOtp(
   } else if (auth) {
     code = await fetchCibusOtp({
       auth,
-      since: new Date(submittedAt.getTime() - 30_000),
+      since: submittedAt,
       timeoutMs: 120_000,
       pollMs: 5_000,
     });

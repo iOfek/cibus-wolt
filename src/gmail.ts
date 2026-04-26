@@ -253,6 +253,7 @@ export async function fetchCibusOtp(opts: FetchCibusOtpOpts): Promise<string> {
       const list = await gmail.users.messages.list({ userId: "me", q: query, maxResults: 5 });
       const msgs = list.data.messages ?? [];
 
+      const candidates: Array<{ id: string; internalDate: number; code: string }> = [];
       for (const m of msgs) {
         if (!m.id || seen.has(m.id)) continue;
         seen.add(m.id);
@@ -264,11 +265,21 @@ export async function fetchCibusOtp(opts: FetchCibusOtpOpts): Promise<string> {
         }
         const body = full.data.payload ? collectBody(full.data.payload) : "";
         const code = extractOtpCode(body);
-        if (code) {
-          logger.info({ id: m.id, code }, "✓ Cibus OTP code found in Gmail");
-          return code;
+        if (!code) {
+          logger.debug({ id: m.id, bodyPreview: body.slice(0, 100) }, "OTP not parsed");
+          continue;
         }
-        logger.debug({ id: m.id, bodyPreview: body.slice(0, 100) }, "OTP not parsed");
+        candidates.push({ id: m.id, internalDate, code });
+      }
+
+      if (candidates.length > 0) {
+        candidates.sort((a, b) => b.internalDate - a.internalDate);
+        const newest = candidates[0]!;
+        logger.info(
+          { id: newest.id, code: newest.code, candidates: candidates.length },
+          "✓ Cibus OTP code found in Gmail",
+        );
+        return newest.code;
       }
     } catch (e) {
       logger.error({ err: e instanceof Error ? e.message : String(e) }, "Gmail OTP fetch error");
