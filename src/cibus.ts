@@ -173,6 +173,9 @@ async function doLogin(
   if (mfa) {
     logger.warn("📱 Cibus is asking for an SMS MFA code");
     await shot("06-mfa-prompt");
+    // Tick "זכור מכשיר זה" early so user-visible state is correct while we wait
+    // for the OTP, and Cibus actually trusts the device after submit.
+    await ensureRememberMe(page);
     let code: string | null = null;
     if (fetchOtpOverride) {
       try {
@@ -199,6 +202,7 @@ async function doLogin(
     await mfa.fill(code);
     await page.keyboard.press("Tab");
     await page.waitForTimeout(300);
+    await ensureRememberMe(page);
     await clickEnabled(
       page,
       [
@@ -251,6 +255,7 @@ async function promptForCode(): Promise<string> {
 }
 
 async function ensureRememberMe(page: Page): Promise<void> {
+  // 1) Attribute-based selectors (English id/name).
   const selectors = [
     'input#remember-me-checkbox',
     'input[type="checkbox"][id*="remember" i]',
@@ -262,16 +267,37 @@ async function ensureRememberMe(page: Page): Promise<void> {
     for (let i = 0; i < count; i++) {
       const el = loc.nth(i);
       if (!(await el.isVisible().catch(() => false))) continue;
-      const checked = await el.isChecked().catch(() => true);
-      if (!checked) {
-        await el.check().catch(async () => {
-          await el.click().catch(() => {});
-        });
-        logger.debug("Remember-me toggled on");
-      }
-      return;
+      if (await tickIfNeeded(el)) return;
     }
   }
+
+  // 2) Hebrew label fallback — covers "זכור מכשיר זה" / "זכור אותי" on MFA screen
+  //    where the checkbox may not have a remember-y id/name.
+  const byRole = page.getByRole("checkbox", { name: /זכור/ });
+  const roleCount = await byRole.count().catch(() => 0);
+  for (let i = 0; i < roleCount; i++) {
+    const el = byRole.nth(i);
+    if (!(await el.isVisible().catch(() => false))) continue;
+    if (await tickIfNeeded(el)) return;
+  }
+
+  // 3) Last resort — click the label text directly.
+  const label = page.locator('label:has-text("זכור")').first();
+  if (await label.isVisible().catch(() => false)) {
+    await label.click().catch(() => {});
+    logger.debug("Remember-me label clicked (text fallback)");
+  }
+}
+
+async function tickIfNeeded(el: ReturnType<Page["locator"]>): Promise<boolean> {
+  const checked = await el.isChecked().catch(() => true);
+  if (!checked) {
+    await el.check().catch(async () => {
+      await el.click().catch(() => {});
+    });
+    logger.debug("Remember-me toggled on");
+  }
+  return true;
 }
 
 async function ensurePermanentPasswordTab(page: Page): Promise<void> {
@@ -390,6 +416,7 @@ export async function triggerCibusSmsAndCompleteLogin(
     );
     await page.keyboard.press("Tab");
     await page.waitForTimeout(500);
+    await ensureRememberMe(page);
 
     await clickEnabled(
       page,
@@ -407,6 +434,9 @@ export async function triggerCibusSmsAndCompleteLogin(
     if (!otpField) {
       return { ok: false, reason: "no OTP input — likely bad username or unexpected page state" };
     }
+    // Tick "זכור מכשיר זה" before we go wait on Gmail — that way the device
+    // is trusted on submit and the user sees the right state on screen.
+    await ensureRememberMe(page);
 
     // Hand off to caller to fetch the code (Gmail / webhook poll).
     let code: string;
@@ -419,6 +449,7 @@ export async function triggerCibusSmsAndCompleteLogin(
     await otpField.fill(code);
     await page.keyboard.press("Tab");
     await page.waitForTimeout(300);
+    await ensureRememberMe(page);
     await clickEnabled(
       page,
       [

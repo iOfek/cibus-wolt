@@ -162,6 +162,7 @@ async function selectCibusPayment(page: Page): Promise<void> {
 }
 
 async function tickRememberInFrame(cibusFrame: FrameLocator): Promise<void> {
+  // 1) English attribute selectors.
   const candidates = [
     'input#remember-me-checkbox',
     'input[type="checkbox"][id*="remember" i]',
@@ -181,8 +182,24 @@ async function tickRememberInFrame(cibusFrame: FrameLocator): Promise<void> {
       return;
     }
   }
-  // Fallback: a label with the Hebrew text, click it
-  const labelled = cibusFrame.locator(':text-matches("זכור", "i")').first();
+
+  // 2) Hebrew accessibility-name fallback — covers "זכור מכשיר זה" on the
+  //    SMS-MFA screen where the input has no remember-y id/name.
+  const byRole = cibusFrame.getByRole("checkbox", { name: /זכור/ });
+  const roleCount = await byRole.count().catch(() => 0);
+  for (let i = 0; i < roleCount; i++) {
+    const el = byRole.nth(i);
+    if (!(await el.isVisible({ timeout: 200 }).catch(() => false))) continue;
+    const checked = await el.isChecked().catch(() => true);
+    if (!checked) {
+      await el.check().catch(async () => { await el.click().catch(() => {}); });
+      logger.debug({ index: i }, "Cibus iframe: ticked 'remember' via role/name");
+    }
+    return;
+  }
+
+  // 3) Last resort — click the label text directly (toggles its for=… input).
+  const labelled = cibusFrame.locator('label:has-text("זכור")').first();
   if (await labelled.isVisible({ timeout: 200 }).catch(() => false)) {
     await labelled.click().catch(() => {});
     logger.debug("Cibus iframe: clicked 'זכור' label");
@@ -279,6 +296,17 @@ async function signInWithOtp(
   );
   logger.info("Cibus OTP request submitted; polling Gmail for code");
 
+  // Wait for the OTP field to appear, then tick "זכור מכשיר זה" *before*
+  // blocking on Gmail/MCP — that way the user-visible state is correct
+  // while we wait, and Cibus actually trusts the device on submit.
+  const otpField = cibusFrame
+    .locator(
+      'input[maxlength="6"], input[autocomplete="one-time-code"], input[inputmode="numeric"], input[type="tel"][maxlength], input#code, input[name*="code" i]',
+    )
+    .first();
+  await otpField.waitFor({ state: "visible", timeout: 20_000 });
+  await tickRememberInFrame(cibusFrame);
+
   let code: string;
   if (fetchOtp) {
     code = await fetchOtp();
@@ -293,13 +321,6 @@ async function signInWithOtp(
     throw new Error("Cibus OTP required but no Gmail auth and no external provider (MCP must pass fetchOtp).");
   }
 
-  // Fill the OTP input
-  const otpField = cibusFrame
-    .locator(
-      'input[maxlength="6"], input[autocomplete="one-time-code"], input[inputmode="numeric"], input[type="tel"][maxlength], input#code, input[name*="code" i]',
-    )
-    .first();
-  await otpField.waitFor({ state: "visible", timeout: 20_000 });
   await otpField.fill(code);
   await page.waitForTimeout(400);
 
@@ -437,6 +458,8 @@ async function handleMaybeSecondMfa(
 
   if (winner === "otp") {
     logger.warn("Cibus asked for a second OTP after login — resolving via input bus");
+    // Tick "זכור מכשיר זה" before we block on Gmail/MCP for the code.
+    await tickRememberInFrame(cibusFrame);
     const { resolveOtp } = await import("./inputs.ts");
     const code = fetchOtp
       ? await fetchOtp()
