@@ -208,13 +208,7 @@ First run opens a browser for OAuth consent. Refresh token → `~/.cibus-wolt/to
 
 Needed for paths **(b)** and **(d)** if you want OTPs fully automatic. Cibus OTPs arrive as SMS, but the tool / Claude reads Gmail — so this Shortcut bridges them.
 
-<video src="https://github.com/iOfek/cibus-wolt/releases/download/media/ios-shortcut-otp-to-gmail.mp4" controls></video>
-
 https://github.com/user-attachments/assets/2101f9d0-8767-42cb-a30d-7169dcec7544
-
-
-
-
 
 1. Shortcuts → **Automation** → **+** → **Message**.
 2. Filter: **Sender** is your Cibus SMS sender (e.g. Pluxee) **and** **Message** contains `קוד האימות`.
