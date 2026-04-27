@@ -210,6 +210,12 @@ Needed for paths **(b)** and **(d)** if you want OTPs fully automatic. Cibus OTP
 
 <video src="https://github.com/iOfek/cibus-wolt/releases/download/media/ios-shortcut-otp-to-gmail.mp4" controls></video>
 
+https://github.com/user-attachments/assets/2101f9d0-8767-42cb-a30d-7169dcec7544
+
+
+
+
+
 1. Shortcuts → **Automation** → **+** → **Message**.
 2. Filter: **Sender** is your Cibus SMS sender (e.g. Pluxee) **and** **Message** contains `קוד האימות`.
 3. Action: **Send Email** — to your own Gmail, subject `cibus-otp`, body `<Message>`. The server extracts the 6-digit code from the raw SMS text.
