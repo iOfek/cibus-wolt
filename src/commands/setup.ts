@@ -1,26 +1,25 @@
 /* eslint-disable no-console */
 import fs from "node:fs/promises";
 import path from "node:path";
+import os from "node:os";
 import crypto from "node:crypto";
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { ensureStateDir, paths } from "../paths.ts";
-import { claudeDesktopConfigPath, findChrome, findOnPath, openUrl } from "../platform.ts";
+import { binaryExists, claudeDesktopConfigPath, findChrome, findOnPath, openUrl } from "../platform.ts";
 import { bothServicesInstalled, restartMcpService } from "../services.ts";
 
 /**
- * Interactive setup.
+ * Interactive setup. Four entry points, each owning a slice of the wizard:
+ *  - runSetupCommand()                 — main wizard (Code + Desktop + phone at end)
+ *  - runClaudeCodeMcpCommand()         — Claude Code MCP install only
+ *  - runClaudeDesktopMcpCommand()      — Claude Desktop MCP install only
+ *  - runPhoneSetupCommand()            — phone access (Custom Connector + tunnel)
  *
- * Two entry points:
- *  - runSetupCommand()        — full wizard (Claude first, then webhook opt-in, etc.)
- *  - runClaudeSetupCommand()  — Claude MCP only (skip webhook prompts)
- *
- * All prompts are editable — existing values are shown as the default. Press
- * Enter to keep; type a new value to change; type `-` to clear. Re-runnable.
+ * All prompts are editable — existing values become the default. Enter to keep;
+ * type a new value to change; type `-` to clear. Re-runnable.
  */
-
-type Mode = "full" | "claude-only";
 
 interface EnvMap {
   [key: string]: string;
@@ -120,27 +119,73 @@ async function stepCredentials(env: EnvMap): Promise<void> {
   env.MAX_SPEND = await ask("Max single-run spend (₪, sanity cap)", env.MAX_SPEND || "1200");
 }
 
-async function stepClaude(env: EnvMap, mode: Mode): Promise<boolean> {
-  title("Claude MCP");
-  if (mode === "claude-only") {
-    console.log("  Configuring the MCP connector for Claude.");
-  } else {
-    console.log("  Cibus OTPs are SMS — Claude can't read those. You either:");
-    console.log("    • type the 6 digits into the Claude chat when prompted, or");
-    console.log("    • set up the iOS Shortcut that forwards Cibus SMS to Gmail");
-    console.log("      (subject 'cibus-otp') — see README section");
-    console.log("      'iOS Shortcut — forward Cibus SMS to Gmail'.");
-  }
+async function stepClaudeCode(): Promise<void> {
+  title("Claude Code MCP (optional)");
+  console.log("  Adds cibus-wolt as an MCP server in Claude Code (~/.claude.json),");
+  console.log("  so you can drive drains from any Claude Code session.");
+  console.log("  Note: Claude Code has no built-in Gmail — Cibus OTPs will use whatever");
+  console.log("  delivery you picked above (gmail/webhook/terminal).");
   console.log("");
 
-  const which = await askChoice("Which Claude client?", ["desktop", "web", "both"], "desktop");
+  if (!binaryExists("claude")) {
+    console.log("  ⚠ `claude` CLI not on PATH. Skipping Claude Code MCP install.");
+    console.log("  Install from https://claude.ai/download, then run: cibus-wolt claude-code-mcp");
+    return;
+  }
 
-  if (which === "desktop" || which === "both") await setupClaudeDesktop();
-  if (which === "web" || which === "both") await setupClaudeWeb(env);
-  return true;
+  const add = await askYesNo("Add cibus-wolt to Claude Code (CLI)?", true);
+  if (add) await setupClaudeCode();
 }
 
-async function setupClaudeDesktop(): Promise<void> {
+async function claudeDesktopInstalled(): Promise<boolean> {
+  // Treat the existence of the parent directory as "installed" — the config
+  // file may not exist on a fresh install, but the dir is created when the app
+  // first launches. False positive risk is acceptable since we ask before adding.
+  try {
+    await fs.access(path.dirname(claudeDesktopConfigPath()));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function setupClaudeCode(): Promise<void> {
+  const claudeBin = findOnPath("claude");
+  if (!claudeBin) {
+    console.log("  ⚠ `claude` CLI not on PATH. Install Claude Code: https://claude.ai/download");
+    console.log("  Then re-run: cibus-wolt claude-code-mcp");
+    return;
+  }
+
+  const projectAbs = path.resolve(".");
+  const nodeBin = findOnPath("node") ?? process.execPath;
+  const mcpScript = path.join(projectAbs, "src/scripts/mcp-stdio.ts");
+
+  // `claude mcp add` rejects duplicates — remove first for idempotency on re-run.
+  spawnSync(claudeBin, ["mcp", "remove", "cibus-wolt", "--scope", "user"], { stdio: "ignore" });
+
+  const addArgs = [
+    "mcp", "add",
+    "--scope", "user",
+    "--transport", "stdio",
+    "cibus-wolt",
+    "--",
+    nodeBin,
+    "--import", "tsx/esm",
+    mcpScript,
+  ];
+  const result = spawnSync(claudeBin, addArgs, { stdio: "inherit" });
+  if (result.status === 0) {
+    console.log("  ✓ Added cibus-wolt to Claude Code (~/.claude.json)");
+    console.log("  In any Claude Code session: ask \"what's my cibus balance?\".");
+    return;
+  }
+  console.log(`  ⚠ \`claude mcp add\` failed with exit ${result.status}.`);
+  console.log("  Run manually:");
+  console.log(`    ${claudeBin} ${addArgs.join(" ")}`);
+}
+
+async function setupClaudeDesktop(env: EnvMap): Promise<void> {
   const configPath = claudeDesktopConfigPath();
   const projectAbs = path.resolve(".");
   const nodeBin = findOnPath("node") ?? process.execPath;
@@ -185,12 +230,24 @@ async function setupClaudeDesktop(): Promise<void> {
     const next = { ...existing, mcpServers: servers };
     await fs.writeFile(configPath, JSON.stringify(next, null, 2), "utf8");
     console.log(`  ✓ Added cibus-wolt to ${configPath}`);
-    console.log("  Now: quit + reopen Claude Desktop. The cibus-wolt tools appear under");
-    console.log("  the connectors menu. In a chat, try: 'call the status tool'.");
+    console.log("  Now: quit + reopen Claude Desktop. In a chat, try: \"what's my cibus balance?\".");
+    printDesktopGmailHint();
   } catch (e) {
     console.log(`  ⚠ Failed to update config: ${e instanceof Error ? e.message : String(e)}`);
     console.log("  Fall back to manual edit using the JSON printed above.");
   }
+}
+
+function printDesktopGmailHint(): void {
+  // Can't programmatically verify Claude Desktop's connector state, and the
+  // user-driven end-to-end test we tried earlier wasn't really automated.
+  // Just a printed pointer — the first real drain is the natural validator.
+  console.log("");
+  console.log("  Tip — enable Claude Desktop's Gmail connector for unattended OTPs:");
+  console.log("    Claude menu → Settings → Connectors → Gmail → Connect");
+  console.log("  Without it, Claude will ask you to type the OTP in chat each time.");
+  console.log("  (Backend Gmail OAuth — picked earlier in OTP delivery — also works,");
+  console.log("  whichever responds first wins.)");
 }
 
 async function prepareRemoteMcp(env: EnvMap, clientName: string): Promise<string | null> {
@@ -263,7 +320,7 @@ async function setupClaudeWeb(env: EnvMap): Promise<void> {
   hr();
 
   const openBrowser = await askYesNo("Open Claude.ai Connectors page now?", true);
-  if (openBrowser) openUrl("https://claude.ai/settings/connectors");
+  if (openBrowser) openUrl("https://claude.ai/customize/connectors");
 
   console.log("");
   console.log("  Steps in the Claude.ai form:");
@@ -271,7 +328,7 @@ async function setupClaudeWeb(env: EnvMap): Promise<void> {
   console.log("    2. Paste Name + URL above; leave OAuth fields empty");
   console.log("    3. Click 'Add' — Claude probes the server and lists 8 tools");
   console.log("    4. In a new chat → Tools menu → toggle on 'Cibus-Wolt'");
-  console.log("    5. Ask: 'call the status tool'");
+  console.log("    5. Ask: \"what's my cibus balance?\"");
   console.log("");
   console.log("  Current URL anytime:  npx cibus-wolt webhook-url");
   console.log("");
@@ -304,15 +361,10 @@ async function stepChromeCheck(): Promise<void> {
   console.log("  First run prompts a manual Wolt login; subsequent runs reuse the session cookie.");
 }
 
-async function stepWebhook(env: EnvMap, claudeWasSetup: boolean): Promise<void> {
+async function stepWebhook(env: EnvMap): Promise<void> {
   title("Phone webhook");
-  console.log("  HTTP endpoints your phone Shortcut POSTs to, exposed via ngrok.");
+  console.log("  HTTP endpoints your phone Shortcut POSTs to, exposed via ngrok or devtunnel.");
   console.log("  Lets you trigger drains + deliver OTPs from your phone.");
-  if (claudeWasSetup) {
-    console.log("");
-    console.log("  (Note: you've also set up Claude — the webhook is an alternative/additional");
-    console.log("  remote-trigger path. Either or both can be active simultaneously.)");
-  }
   console.log("");
 
   // Webhook token
@@ -389,20 +441,18 @@ async function runWebhookOtpTest(env: EnvMap): Promise<boolean> {
     return false;
   }
   const baseUrl = `https://${hostname}/webhook/${token}`;
-  // Set BEFORE the trigger: SMS fires mid-trigger so the POST may arrive
-  // before the function returns.
-  const since = Date.now() - 30_000;
 
   console.log("");
   console.log("  Make sure the OTP Automation in Shortcuts is saved and 'Run After");
   console.log("  Confirmation' is OFF — otherwise iOS will silently swallow it.");
   console.log("");
 
-  const fetchOtp = async (): Promise<string> => {
+  const fetchOtp = async (since: Date): Promise<string> => {
+    const sinceMs = since.getTime();
     const deadline = Date.now() + 90_000;
     while (Date.now() < deadline) {
       try {
-        const res = await fetch(`${baseUrl}/last_otp?since=${since}`);
+        const res = await fetch(`${baseUrl}/last_otp?since=${sinceMs}`);
         if (res.ok) {
           const json = (await res.json()) as { last?: { code: string; receivedAt: number } | null };
           if (json.last) return json.last.code;
@@ -456,7 +506,7 @@ async function withSilencedLogger<T>(fn: () => Promise<T>): Promise<T> {
  */
 async function triggerCibusSmsAndSaveProfile(
   env: EnvMap,
-  fetchOtp: () => Promise<string>,
+  fetchOtp: (since: Date) => Promise<string>,
 ): Promise<{ ok: boolean; code?: string }> {
   if (!env.CIBUS_USER) {
     console.log("  ⚠ CIBUS_USER missing from .env — can't auto-trigger SMS. Skipping.");
@@ -543,7 +593,7 @@ async function stepGmail(env: EnvMap): Promise<void> {
 
     console.log("");
     console.log("  Verifying OAuth: a browser tab will open for Google consent.");
-    console.log("  Pick the Gmail account that receives Wolt + Cibus mail.");
+    console.log("  Pick the Gmail account that receives Cibus mail.");
     try {
       const { getAuthClient } = await import("../gmail.ts");
       const { google } = await import("googleapis");
@@ -600,11 +650,7 @@ async function runGmailOtpTest(env: EnvMap, auth: import("google-auth-library").
   console.log("  After Confirmation' is OFF — otherwise iOS will silently swallow it.");
   console.log("");
 
-  // Set `since` BEFORE triggering: SMS fires mid-trigger, so the email may
-  // already be in Gmail by the time the trigger returns. Small back-buffer
-  // for clock skew between Gmail's internalDate and our local clock.
-  const since = new Date(Date.now() - 30_000);
-  const fetchOtp = async (): Promise<string> => {
+  const fetchOtp = async (since: Date): Promise<string> => {
     const { fetchCibusOtp } = await import("../gmail.ts");
     return await fetchCibusOtp({ auth, since, timeoutMs: 90_000, pollMs: 5_000 });
   };
@@ -724,20 +770,24 @@ export async function runSetupCommand(): Promise<void> {
   console.log(`  ✓ Saved to ${envPath}`);
 
   await stepChromeCheck();
-
-  const strategy = await stepStrategy(env);
-
-  // Order matters: Claude MCP is offered first so its answer can turn off the
-  // webhook prompt (Claude covers the same need via its Gmail integration).
-  const claudeWasSetup = strategy.useClaude ? await stepClaude(env, "full") : false;
-  if (strategy.useWebhook) await stepWebhook(env, claudeWasSetup);
-  if (strategy.useGmail) await stepGmail(env);
+  await stepOtpDelivery(env);
 
   await writeEnvFile(envPath, env);
 
   await stepWoltLogin(env);
   await stepSchedules();
   await stepSmokeTest();
+
+  // Claude MCP + phone access at the very end — orchestration / remote-trigger
+  // layers on top of a working drain. Both Claude Code and Claude Desktop are
+  // suggested (independent configs); user can Y/n each. Phone access via
+  // tunnel covers Claude.ai web/mobile and Desktop (Custom Connectors sync via
+  // your Claude account).
+  await stepClaudeCode();
+  await stepClaudeDesktop(env);
+  await stepPhoneAccess(env);
+
+  await writeEnvFile(envPath, env);
   printDone();
 }
 
@@ -757,139 +807,169 @@ async function stepSchedules(): Promise<void> {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Strategy explainer — shows trade-offs + current state, recommends a path.
+// Detection helper + OTP delivery / phone-access steps
 // ────────────────────────────────────────────────────────────────────────────
 
-interface Strategy {
-  useClaude: boolean;
-  useWebhook: boolean;
-  useGmail: boolean;
-}
-
 async function detectExisting(env: EnvMap): Promise<{
-  claudeConfigured: boolean;
+  claudeCodeConfigured: boolean;
+  claudeDesktopConfigured: boolean;
+  claudeWebConfigured: boolean;
   webhookConfigured: boolean;
   gmailConfigured: boolean;
 }> {
   const hasTunnelHostname = await fs.access(paths.tunnelHostname).then(() => true).catch(() => false);
   const hasWebhookToken = await fs.access(paths.webhookToken).then(() => true).catch(() => false);
-  // Claude Desktop: check for claude_desktop_config.json containing cibus-wolt
-  let claudeDesktop = false;
+  let claudeDesktopConfigured = false;
   try {
     const cfg = await fs.readFile(claudeDesktopConfigPath(), "utf8");
-    claudeDesktop = cfg.includes("cibus-wolt");
+    claudeDesktopConfigured = cfg.includes("cibus-wolt");
   } catch { /* none */ }
-  const claudeWeb = Boolean(env.MCP_BEARER_TOKEN) && hasTunnelHostname;
+  let claudeCodeConfigured = false;
+  try {
+    const cfg = await fs.readFile(path.join(os.homedir(), ".claude.json"), "utf8");
+    claudeCodeConfigured = cfg.includes("cibus-wolt");
+  } catch { /* none */ }
+  const claudeWebConfigured = Boolean(env.MCP_BEARER_TOKEN) && hasTunnelHostname;
   return {
-    claudeConfigured: claudeDesktop || claudeWeb,
+    claudeCodeConfigured,
+    claudeDesktopConfigured,
+    claudeWebConfigured,
     webhookConfigured: hasWebhookToken && hasTunnelHostname,
     gmailConfigured: Boolean(env.GOOGLE_CLIENT_ID),
   };
 }
 
-async function stepStrategy(env: EnvMap): Promise<Strategy> {
-  title("How should we get the Cibus OTP into the tool?");
+async function stepOtpDelivery(env: EnvMap): Promise<void> {
+  title("Cibus OTP delivery");
   console.log("  Cibus forces a re-auth occasionally — a 6-digit code SMS'd to your phone.");
   console.log("  We need that code on the laptop. (Wolt login is one-time manual via");
   console.log("  `cibus-wolt wolt-login` — the session cookie auto-refreshes on every drain.)");
   console.log("");
-  console.log("  Four possible sources. First to respond wins; you can use multiple.");
-  console.log("");
-  console.log("    (a) Terminal prompt          — works only when you're at laptop. Zero setup.");
-  console.log("    (b) Gmail OAuth (polling)    — requires Gmail + one-time GCP project.");
-  console.log("    (c) Phone webhook (ngrok)    — requires ngrok free signup + iOS Shortcut.");
-  console.log("    (d) Claude MCP               — Claude's Gmail integration reads forwarded SMS.");
-  console.log("                                   Claude.ai web also needs ngrok.");
-  console.log("");
 
   const existing = await detectExisting(env);
-  if (existing.claudeConfigured || existing.webhookConfigured || existing.gmailConfigured) {
-    console.log("  You already have:");
-    if (existing.claudeConfigured) console.log("    ✓ Claude MCP");
-    if (existing.webhookConfigured) console.log("    ✓ Phone webhook (ngrok)");
+  if (existing.webhookConfigured || existing.gmailConfigured) {
+    console.log("  Already configured:");
+    if (existing.webhookConfigured) console.log("    ✓ Phone webhook");
     if (existing.gmailConfigured) console.log("    ✓ Gmail OAuth");
     console.log("");
   }
 
-  const usesClaude = await askYesNo("Do you use Claude to trigger drains (desktop or web)?", existing.claudeConfigured || false);
-  let claudeHasGmail = false;
-  if (usesClaude) {
-    claudeHasGmail = await askYesNo(
-      "  …and does your Claude have the Gmail integration connected?\n  (Lets Claude read the Cibus OTP if you forward it to Gmail with subject 'cibus-otp'.)",
-      true,
-    );
-  }
-  const wantsRemote = await askYesNo(
-    "Do you want to trigger drains from your phone / away from the laptop?",
-    existing.webhookConfigured || existing.claudeConfigured || false,
+  console.log("  Pick how the Cibus OTP gets to the laptop:");
+  console.log("    gmail     —  iOS Shortcut forwards the OTP to Gmail, our tool polls Gmail for the forwarded OTP");
+  console.log("                 One-time GCP OAuth setup.[~2 min one-time]");
+  console.log("    webhook   — iOS Shortcut POSTs the OTP to us via ngrok/devtunnel");
+  console.log("                 One-time ngrok/devtunnel setup. [~3 min one-time]");
+  console.log("    terminal  — type the 6 digits when the wizard prompts. Zero setup. ");
+  console.log("                 requires manual intervention every time. (stupid - makes the tool mostly useless)");
+  console.log("");
+  const otp = await askChoice(
+    "How should we deliver the Cibus OTP?",
+    ["gmail", "webhook", "terminal"],
+    existing.gmailConfigured ? "gmail" : existing.webhookConfigured ? "webhook" : "terminal",
   );
-  const hasGmail = usesClaude && claudeHasGmail
-    ? false // no need for separate Gmail OAuth — Claude's Gmail covers OTP delivery
-    : await askYesNo(
-        "Set up Gmail OAuth (one-time GCP client) for OTP polling on our side?",
-        existing.gmailConfigured || false,
-      );
-
-  // Derive recommendation
-  let useClaude = usesClaude;
-  let useWebhook = false;
-  let useGmail = hasGmail;
-  let rationale = "";
-
-  if (usesClaude && claudeHasGmail) {
-    rationale = "Using Claude (Gmail connected) — Cibus OTPs arrive as SMS, so you either";
-    rationale += "\n  type the 6 digits in chat when Claude asks, or add an iOS Shortcut that";
-    rationale += "\n  forwards Cibus SMS to Gmail (subject 'cibus-otp') for fully-unattended runs.";
-    if (wantsRemote) rationale += "\n  Web Claude.ai also needs ngrok, which the Claude step handles.";
-  } else if (usesClaude && !claudeHasGmail) {
-    useWebhook = true;
-    rationale = "Using Claude (no Gmail) — Claude orchestrates, but the OTP can't go through Gmail.";
-    rationale += "\n  Turning ON the phone webhook — an iOS Shortcut forwards the Cibus SMS to";
-    rationale += "\n  ngrok, which our server feeds back to Claude via the same input bus.";
-  } else if (wantsRemote) {
-    useWebhook = true;
-    rationale = "No Claude + want remote trigger → phone webhook via ngrok is the best fit.";
-    rationale += "\n  iOS Shortcut forwards the Cibus SMS to the webhook.";
-  } else if (hasGmail) {
-    rationale = "Local-only + Gmail available → Gmail polling gives fully-unattended local runs.";
-    rationale += "\n  Needs an iOS Shortcut to forward Cibus SMS OTPs to Gmail (subject 'cibus-otp').";
-  } else {
-    rationale = "Local-only, no Gmail → terminal prompts work fine. No additional setup needed.";
-    rationale += "\n  You'll read the Cibus OTP off your phone and type it in the terminal.";
-  }
-
-  console.log("");
-  console.log(`  Recommended: ${rationale}`);
-  console.log("");
-  const accept = await askYesNo("Accept the recommendation?", true);
-  if (!accept) {
-    console.log("  Override — choose each component:");
-    useClaude = await askYesNo("  Configure Claude MCP?", useClaude);
-    useWebhook = await askYesNo("  Configure phone webhook (ngrok)?", useWebhook);
-    useGmail = await askYesNo("  Configure Gmail OAuth?", useGmail);
-  }
-  return { useClaude, useWebhook, useGmail };
+  if (otp === "gmail") await stepGmail(env);
+  else if (otp === "webhook") await stepWebhook(env);
+  else console.log("  Skipping — you'll be prompted in the terminal during drains.");
 }
 
-export async function runClaudeSetupCommand(): Promise<void> {
+async function stepPhoneAccess(env: EnvMap): Promise<void> {
+  title("Phone access (Claude.ai mobile / web)");
+  console.log("  Sets up an HTTP tunnel + Custom Connector so Claude.ai (web AND mobile)");
+  console.log("  can drive cibus-wolt over the internet. Custom Connectors sync to Claude");
+  console.log("  Desktop too via your Claude account — handy if you skipped the local stdio");
+  console.log("  install for Desktop earlier. Claude Code is unaffected (separate registry).");
+  console.log("");
+  const proceed = await askYesNo("Set up phone access now? (ngrok/devtunnel + Claude.ai Custom Connector)", true);
+  if (!proceed) {
+    console.log("  Skipped. Add later: cibus-wolt phone-setup");
+    return;
+  }
+  await setupClaudeWeb(env);
+}
+
+export async function runClaudeCodeMcpCommand(): Promise<void> {
   await ensureStateDir();
   const envPath = path.join(paths.dir, ".env");
   const env = await readEnvFile(envPath);
 
   console.log("");
-  console.log("  cibus-wolt — Claude-only setup");
-  console.log("  This configures only the Claude MCP connector. If you haven't");
-  console.log("  set Cibus/Wolt credentials yet, run `cibus-wolt setup` first.");
+  console.log("  cibus-wolt — Claude Code MCP install");
 
   if (!env.CIBUS_USER) {
     console.log("");
-    console.log("  ⚠ Cibus credentials are missing from ~/.cibus-wolt/.env. The MCP server");
-    console.log("  will still install, but won't work until you add them.");
+    console.log("  ⚠ Cibus credentials missing from ~/.cibus-wolt/.env.");
+    console.log("    Run `cibus-wolt setup` first — the MCP server installs but won't");
+    console.log("    function until creds are present.");
+    process.exit(1);
   }
 
-  await stepClaude(env, "claude-only");
+  await stepClaudeCode();
+  printDone();
+}
+
+async function stepClaudeDesktop(env: EnvMap): Promise<void> {
+  title("Claude Desktop MCP (optional)");
+  console.log("  Adds cibus-wolt as an MCP server in Claude Desktop, so Desktop can drive");
+  console.log("  drains. Independent from Claude Code — separate config file.");
+  console.log("");
+
+  if (!await claudeDesktopInstalled()) {
+    console.log("  ⚠ Claude Desktop not detected. Skipping. Install from");
+    console.log("    https://claude.ai/download, then run: cibus-wolt claude-desktop-mcp");
+    return;
+  }
+
+  const add = await askYesNo("Add cibus-wolt to Claude Desktop?", true);
+  if (add) await setupClaudeDesktop(env);
+}
+
+export async function runClaudeDesktopMcpCommand(): Promise<void> {
+  await ensureStateDir();
+  const envPath = path.join(paths.dir, ".env");
+  const env = await readEnvFile(envPath);
+
+  console.log("");
+  console.log("  cibus-wolt — Claude Desktop MCP install");
+
+  if (!env.CIBUS_USER) {
+    console.log("");
+    console.log("  ⚠ Cibus credentials missing from ~/.cibus-wolt/.env.");
+    console.log("    Run `cibus-wolt setup` first — the MCP entry installs but won't");
+    console.log("    function until creds are present.");
+    process.exit(1);
+  }
+
+  await stepClaudeDesktop(env);
   await writeEnvFile(envPath, env);
-  console.log(`  ✓ Saved to ${envPath}`);
+  printDone();
+}
+
+export async function runPhoneSetupCommand(): Promise<void> {
+  await ensureStateDir();
+  const envPath = path.join(paths.dir, ".env");
+  const env = await readEnvFile(envPath);
+
+  console.log("");
+  console.log("  cibus-wolt — phone access setup");
+
+  if (!env.CIBUS_USER) {
+    console.log("");
+    console.log("  ⚠ Cibus credentials missing. Run `cibus-wolt setup` first.");
+    process.exit(1);
+  }
+
+  const existing = await detectExisting(env);
+  if (!existing.claudeCodeConfigured && !existing.claudeDesktopConfigured) {
+    console.log("");
+    console.log("  ⚠ No Claude client has cibus-wolt installed yet. Phone access is");
+    console.log("    pointless without a Claude to drive it. Run one of:");
+    console.log("      cibus-wolt claude-code-mcp        # Claude Code");
+    console.log("      cibus-wolt claude-desktop-mcp     # Claude Desktop");
+    process.exit(1);
+  }
+
+  await stepPhoneAccess(env);
+  await writeEnvFile(envPath, env);
   printDone();
 }
 

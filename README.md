@@ -17,15 +17,18 @@ npx cibus-wolt setup        # interactive wizard
 npx cibus-wolt run          # actually drain (opens Chrome so you can watch)
 ```
 
-The wizard asks what kind of setup you want: just CLI, CLI + phone trigger, or CLI + Claude. Pick one based on the table below, then keep reading the matching section if you want detail.
+The wizard's first question is "Do you use Claude (Code, Desktop, or Claude.ai)?".
 
-| You want to…                               | Pick                  | Phone access | Needs Gmail? |
-|--------------------------------------------|-----------------------|--------------|--------------|
-| Run it from my laptop, that's it           | **CLI-only**          | No           | No           |
-| Trigger it from my phone (web/cellular)    | **CLI + webhook**     | Yes          | No           |
-| Trigger from Claude app (desktop or web)   | **CLI + Claude**      | Yes          | No (Claude's Gmail integration covers it) |
+- **Yes** → it walks you through the Claude MCP setup (auto-detects Claude Code + Desktop, optionally adds Claude.ai web for phone access via ngrok/devtunnel). Claude orchestrates everything; OTPs come through Claude's own Gmail integration.
+- **No** → it asks how you'd like the Cibus OTP delivered: `gmail` (poll your Gmail), `webhook` (iOS Shortcut → ngrok/devtunnel), or `terminal` (type it when prompted).
 
-All three paths compose. You can have all of them on at once.
+| You want to…                                  | Pick                       |
+|-----------------------------------------------|----------------------------|
+| Trigger from Claude (Code, Desktop, or web)   | **Claude MCP**             |
+| Trigger from my phone, no Claude              | **Webhook (ngrok/devtunnel)** |
+| Run it from my laptop, type OTP at prompt     | **Terminal** (or **Gmail** for unattended local) |
+
+Re-run `setup` anytime to add another path; it shows current values and is safe to repeat.
 
 ## How it works
 
@@ -42,31 +45,18 @@ The only thing the automation can't get on its own is the **Cibus SMS OTP** — 
 
 (Wolt login is one-time manual: `cibus-wolt wolt-login` opens Chrome to the Wolt login page, you sign in once, the session cookie is saved to the dedicated profile, and every subsequent drain silently refreshes its expiry. No magic-link plumbing — Wolt's bot detection rejected it on fresh profiles anyway.)
 
-Four sources can deliver the Cibus OTP. First to respond wins; multiple can be active at once.
+Sources that can deliver the OTP:
 
 | Source | How it gets the signal | What you need |
 |---|---|---|
-| **(a) Terminal prompt** | You type the 6 digits when prompted | Nothing. Only works if you're at the laptop during the drain. |
-| **(b) Gmail OAuth** | Tool polls your Gmail for a forwarded SMS (subject `cibus-otp`) | Gmail account + one-time GCP project (OAuth client ID) + iOS Shortcut that emails the SMS to your own Gmail. |
-| **(c) Phone webhook (ngrok)** | iOS Shortcut extracts the 6 digits and POSTs to our server | ngrok free signup + static domain + iOS Shortcut (2-min one-time each). Works from cellular. |
-| **(d) Claude MCP** | You type the 6 digits in chat (Claude calls `submit_otp`), OR an iOS Shortcut forwards SMS to your Gmail and Claude's Gmail integration reads it | Claude. iOS Shortcut only if you want OTPs fully automatic. For claude.ai web, ngrok too. |
+| **Terminal prompt** | You type the 6 digits when prompted | Nothing. Only works if you're at the laptop during the drain. |
+| **Gmail OAuth** | Tool polls your Gmail for a forwarded SMS (subject `cibus-otp`) | Gmail account + one-time GCP project (OAuth client ID) + iOS Shortcut that forwards the SMS to your Gmail. |
+| **Phone webhook** | iOS Shortcut extracts the 6 digits and POSTs to our server | ngrok or devtunnel + iOS Shortcut (~2 min one-time each). Works from cellular. |
+| **Claude MCP** | Claude reads the OTP via its Gmail integration (you forward SMS to Gmail, subject `cibus-otp`), OR you type the 6 digits in chat | Claude (Code, Desktop, or web). iOS Shortcut only if you want OTPs fully automatic. |
 
-**Why this needs forwarding at all**: Cibus OTPs come by SMS. Neither Claude nor our Gmail poller can read SMS directly. Either you type the 6 digits manually when asked, or you set up one iOS Shortcut that forwards the SMS to a place an integration can read (Gmail or our webhook).
+**Why forwarding at all**: Cibus OTPs come by SMS. Neither Claude nor our Gmail poller can read SMS directly. Either you type the 6 digits manually when asked, or one iOS Shortcut forwards the SMS to a place an integration can read.
 
-**Remote control** (trigger a drain from your phone / away from the laptop) requires **(c)** or **(d)** — both give you a public URL. Local-only is **(a)** or **(b)**.
-
-### Which should you pick?
-
-| Your situation | Recommended |
-|---|---|
-| Use Claude, OK typing OTP in chat | **(d)**. ~10s in chat when Cibus needs MFA. |
-| Use Claude + Gmail, want OTP automated too | **(d)** + iOS Shortcut that forwards Cibus SMS to Gmail (subject `cibus-otp`). |
-| Use Claude but no Gmail (privacy / don't use Gmail) | **(c) + (d)**. Claude orchestrates; iOS Shortcut forwards SMS to the ngrok webhook. |
-| Have iPhone, don't use Claude, want remote trigger | **(c)**. iOS Shortcut for OTP SMS → webhook. |
-| Have Gmail, don't use Claude, OK being at laptop | **(b)** + iOS Shortcut that forwards Cibus SMS to Gmail. |
-| Just run drains manually at the laptop | **(a)**. No signups. Type OTP when prompted. |
-
-`npx cibus-wolt setup` asks these questions up front, detects what's already configured, and recommends a path. You can pick a different combination or run the wizard again to add another path later.
+**Remote control** (trigger a drain from your phone / away from the laptop) requires **Webhook** or **Claude MCP with phone access** — both give you a public URL. Local-only setups: terminal or Gmail.
 
 State lives at `~/.cibus-wolt/`:
 
@@ -84,7 +74,7 @@ State lives at `~/.cibus-wolt/`:
 
 ## Install walkthroughs
 
-Pick one and follow top-to-bottom. You can always add another path later by running `npx cibus-wolt setup` or `claude-setup` again — prompts show current values so it's safe to re-run.
+Pick one and follow top-to-bottom. You can always add another path later by running `npx cibus-wolt setup` again — prompts show current values so it's safe to re-run. Per-feature commands also exist (`claude-code-mcp`, `claude-desktop-mcp`, `phone-setup`) for adding pieces without re-walking the whole wizard.
 
 ### I. CLI-only (simplest)
 
@@ -93,7 +83,8 @@ You run drains from your laptop's terminal. Nothing else.
 ```sh
 npx cibus-wolt setup
 # → answer Cibus creds
-# → say NO to webhook, NO to Claude MCP, NO to Gmail
+# → "How should we deliver the Cibus OTP?" → terminal
+# → say no to Claude Code install + phone access at the end
 npx cibus-wolt run
 ```
 
@@ -110,8 +101,9 @@ You want to trigger drains from your phone and have your iPhone Shortcut deliver
 ```sh
 npx cibus-wolt setup
 # → answer Cibus creds
-# → YES to phone webhook
+# → "How should we deliver the Cibus OTP?" → webhook
 # → wizard walks through ngrok install + free static domain (see below)
+# → say no to Claude Code install + phone access at the end (unless you want them)
 ```
 
 The ngrok step:
@@ -157,39 +149,45 @@ Android: Tasker's HTTP Request task does the same thing — same URLs, same JSON
 
 ### III. CLI + Claude
 
-Claude orchestrates the drain. Wolt is already logged in (one-time `cibus-wolt wolt-login`); Claude doesn't need to touch it. The only thing Claude needs help with is the **Cibus SMS OTP**, which it can't read directly. OTP delivery is either:
+Claude orchestrates the drain. Wolt is already logged in (one-time `cibus-wolt wolt-login`); Claude doesn't need to touch it. The only thing Claude can't do on its own is read the **Cibus SMS OTP** — for OAuth-based unattended reads, either set up our Gmail OAuth in the main wizard (covers Claude Code's MCP child via the same backend poller) or enable Claude Desktop's built-in Gmail connector (account-level Google OAuth). Otherwise, type the OTP in chat each time.
 
-- **Manual** — Claude asks, you read the SMS off your phone and type the 6 digits in the chat.
-- **iOS Shortcut → Gmail** — Shortcut forwards the Cibus SMS to your Gmail with subject `cibus-otp`; Claude's Gmail integration reads it and submits automatically. See the [Cibus SMS → Gmail Shortcut](#ios-shortcut--forward-cibus-sms-to-gmail) below.
-- **iOS Shortcut → webhook** — if you'd rather not give Claude Gmail access, set up the phone webhook too (path II) alongside Claude. Shortcut POSTs the SMS to ngrok; the tool's input bus feeds it back to Claude.
+The main `setup` wizard offers **all three** Claude paths at the end (after creds, Wolt, schedules). You can also re-run individual pieces via dedicated commands:
 
-Whichever fires first wins. You can compose them.
+#### Claude Code (CLI)
 
-**Claude Desktop (simplest):**
+Has no built-in Gmail. Reads OTPs via whatever the backend OTP delivery does — if you picked `gmail` in the main wizard, the MCP child polls Gmail with our OAuth refresh token and submits OTPs to the bus automatically.
 
 ```sh
-npx cibus-wolt claude-setup
-# → pick "desktop"
-# → wizard offers to auto-merge cibus-wolt into claude_desktop_config.json
+npx cibus-wolt setup            # full wizard — at the end, Y/n on Claude Code
+# OR, after main setup is done:
+npx cibus-wolt claude-code-mcp  # standalone install
 ```
 
-Restart Claude Desktop. In a chat, toggle on Cibus-Wolt under the Tools menu. Ask: "call status". Then: "start a dry drain" — Claude drives the flow and waits for the Cibus OTP (asks you, or picks it up from Gmail/webhook).
+In any Claude Code session: `what's my cibus balance?` → `start a dry drain`. If Cibus prompts for OTP and the backend can't auto-resolve it (no Gmail OAuth + no webhook), Claude asks you in chat and calls `submit_otp` with whatever you type.
 
-**Claude.ai web + mobile:**
+#### Claude Desktop
+
+Has a built-in Gmail connector (Google OAuth, account-bound). When enabled, Claude Desktop reads the SMS-forwarded `cibus-otp` email itself and submits via `submit_otp`. Independent from Claude Code's config.
 
 ```sh
-npx cibus-wolt claude-setup
-# → pick "web"
-# → wizard also runs ngrok setup if not already done (stable URL required)
-# → prints the full Custom Connector URL
+npx cibus-wolt setup              # full wizard — at the end, Y/n on Claude Desktop
+# OR:
+npx cibus-wolt claude-desktop-mcp # standalone install
 ```
 
-Register the printed URL at `claude.ai → Settings → Connectors → Add custom connector`. Name it `Cibus-Wolt`, leave OAuth fields blank.
+After install: quit + reopen Claude Desktop, then enable Gmail at **Settings → Connectors → Gmail → Connect**. Ask `what's my cibus balance?` to verify the MCP loaded.
 
-In a chat, toggle on the connector, ask "start a dry drain." Claude:
-1. Calls `start_drain({dry_run: true})` → pauses if Cibus needs OTP
-2. For Cibus OTP (SMS): Claude *cannot* read SMS. Either you type the 6 digits in chat (Claude calls `submit_otp` with what you provided), OR — if you set up the SMS → Gmail Shortcut — Claude reads the `cibus-otp` email and submits automatically
-3. Polls `drain_status` until completed
+#### Claude.ai web / mobile (phone access)
+
+Custom Connectors registered at [claude.ai/customize/connectors](https://claude.ai/customize/connectors) sync to Claude.ai web AND mobile AND Claude Desktop (via your Claude account). They do NOT sync to Claude Code. Setting one up gives you remote-trigger from anywhere you're signed into Claude.
+
+```sh
+npx cibus-wolt phone-setup
+# → preflight: requires Cibus creds + Claude Code OR Desktop already installed
+# → walks tunnel setup (ngrok or devtunnel) + Custom Connector URL
+```
+
+The wizard prints a paste-ready URL. Register it at [claude.ai/customize/connectors](https://claude.ai/customize/connectors) → Add custom connector. Name it `Cibus-Wolt`, leave OAuth fields blank.
 
 **SMS is the unskippable bit.** Cibus OTPs come by SMS, which no integration can read directly. Either you live with a short chat interruption when an OTP is needed, or you set up one iOS Shortcut (SMS → Gmail) once — see the section below.
 
@@ -220,11 +218,13 @@ Without this, OTP delivery is manual: Claude will ask you for the 6 digits in ch
 ## CLI reference
 
 ```
-cibus-wolt setup            Interactive first-time setup / edit existing values
-cibus-wolt wolt-login       Open Chrome to log in to Wolt manually (when session expired)
-cibus-wolt claude-setup     Claude MCP only (skip webhook prompts)
-cibus-wolt stable-tunnel    Set up ngrok static domain
-cibus-wolt devtunnel-setup  Set up Azure Dev Tunnels (alternative when ngrok is blocked)
+cibus-wolt setup                Main wizard. Ends with optional Claude Code install + phone access.
+cibus-wolt wolt-login           Open Chrome to log in to Wolt manually (when session expired)
+cibus-wolt claude-code-mcp      Install cibus-wolt MCP into Claude Code. Requires `setup` first.
+cibus-wolt claude-desktop-mcp   Install cibus-wolt MCP into Claude Desktop. Requires `setup` first.
+cibus-wolt phone-setup          Phone access (Custom Connector via tunnel). Requires Code or Desktop installed.
+cibus-wolt stable-tunnel        Set up ngrok static domain
+cibus-wolt devtunnel-setup      Set up Azure Dev Tunnels (alternative when ngrok is blocked)
 cibus-wolt run [--dry-run] [--amount N]
                             Run a drain. --amount N spends exactly N ₪ (≤ available).
 cibus-wolt balance          Just fetch the Cibus balance

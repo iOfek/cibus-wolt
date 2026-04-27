@@ -201,24 +201,12 @@ export async function runDevtunnelSetupCommand(): Promise<void> {
     return;
   }
   try {
+    // install-bg prints the URLs + service status — no need to repeat them here.
     execSync("npm run install-bg", { stdio: "inherit" });
   } catch {
     console.log("  install-bg failed. Run manually: npm run install-bg");
     return;
   }
-
-  // Show endpoints
-  console.log("");
-  hr();
-  console.log("  ✓ Dev Tunnel ready.");
-  console.log("");
-  console.log("  Your endpoints:");
-  console.log(`    Webhook:  https://${hostname}/webhook/<token>/...`);
-  console.log(`    MCP:      https://${hostname}/mcp/<MCP_BEARER_TOKEN>`);
-  console.log("");
-  console.log("  These URLs survive reboots as long as the tunnel exists in your MS account.");
-  console.log("  Get the full URLs anytime: npx cibus-wolt webhook-url");
-  hr();
 }
 
 function createTunnel(): boolean {

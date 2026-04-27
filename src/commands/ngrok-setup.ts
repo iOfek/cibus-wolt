@@ -139,26 +139,12 @@ export async function runNgrokSetupCommand(): Promise<void> {
   }
 
   try {
+    // install-bg prints the URLs + service status — no need to repeat them here.
     execSync("npm run install-bg", { stdio: "inherit" });
   } catch {
     console.log("  install-bg failed. Run manually: npm run install-bg");
     return;
   }
-
-  // Result
-  console.log("");
-  hr();
-  console.log("  ✓ Stable ngrok tunnel ready.");
-  console.log("");
-  console.log("  Your endpoints are now:");
-  console.log(`    Webhook:  https://${domain}/webhook/<token>/...`);
-  console.log(`    MCP:      https://${domain}/mcp/<MCP_BEARER_TOKEN>`);
-  console.log("");
-  console.log("  These URLs survive reboots. Update your Claude.ai Custom Connector");
-  console.log("  + phone Shortcut once with these URLs — done for good.");
-  console.log("");
-  console.log("  Get the full URLs anytime: npx cibus-wolt webhook-url");
-  hr();
 }
 
 async function promptAndStoreToken(): Promise<void> {

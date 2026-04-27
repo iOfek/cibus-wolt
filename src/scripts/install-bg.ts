@@ -398,14 +398,6 @@ async function main() {
   console.log(`  Webhook base: https://${domain}/webhook/<webhook-token>`);
   console.log(`  MCP:          ${connectorUrl}`);
   console.log("");
-  console.log("━".repeat(74));
-  console.log("");
-  console.log("Claude.ai Custom Connector:");
-  console.log("  1. Open claude.ai → Settings → Connectors → Add custom connector");
-  console.log("  2. Name: Cibus-Wolt");
-  console.log(`  3. URL: ${connectorUrl}`);
-  console.log("  4. Leave OAuth fields blank. Click Add.");
-  console.log("");
   if (IS_MAC) {
     console.log("Status:     launchctl list | grep cibus-wolt");
     console.log(`Logs:       tail -f ${paths.logsDir}/mcp.log ${paths.logsDir}/tunnel.log`);
@@ -416,7 +408,9 @@ async function main() {
   }
   console.log("Uninstall:  npm run uninstall-bg");
   console.log("");
-  console.log(`Phone webhook URL: npx cibus-wolt webhook-url`);
+  console.log("Register a Claude.ai Custom Connector: npx cibus-wolt claude-setup");
+  console.log("Phone webhook URL anytime:             npx cibus-wolt webhook-url");
+  console.log("━".repeat(74));
 }
 
 main().catch((e) => {

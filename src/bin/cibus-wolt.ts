@@ -50,7 +50,9 @@ function showHelp(): void {
       "  devtunnel-setup    Set up Azure Dev Tunnels (Microsoft) — alternative when ngrok is blocked.",
       "  setup              Interactive first-time setup wizard. Re-run to edit values.",
       "  wolt-login         Open Chrome to log in to Wolt manually (session expired).",
-      "  claude-setup       Claude-MCP-only setup (skips phone webhook prompts).",
+      "  claude-code-mcp    Install cibus-wolt MCP into Claude Code (~/.claude.json). Requires `cibus-wolt setup` first.",
+      "  claude-desktop-mcp Install cibus-wolt MCP into Claude Desktop (claude_desktop_config.json). Requires `cibus-wolt setup` first.",
+      "  phone-setup        Set up phone access (Custom Connector via tunnel). Requires Claude Code or Desktop installed.",
       "  schedule <sub>     Manage recurring drain schedules (list|add|edit|remove|enable|disable|cadence).",
       "  help               Show this help.",
       "",
@@ -121,9 +123,19 @@ async function main(): Promise<void> {
       await runWoltLoginCommand();
       break;
     }
-    case "claude-setup": {
-      const { runClaudeSetupCommand } = await import("../commands/setup.ts");
-      await runClaudeSetupCommand();
+    case "claude-code-mcp": {
+      const { runClaudeCodeMcpCommand } = await import("../commands/setup.ts");
+      await runClaudeCodeMcpCommand();
+      break;
+    }
+    case "claude-desktop-mcp": {
+      const { runClaudeDesktopMcpCommand } = await import("../commands/setup.ts");
+      await runClaudeDesktopMcpCommand();
+      break;
+    }
+    case "phone-setup": {
+      const { runPhoneSetupCommand } = await import("../commands/setup.ts");
+      await runPhoneSetupCommand();
       break;
     }
     case "schedule": {
