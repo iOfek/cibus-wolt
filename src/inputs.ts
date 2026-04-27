@@ -131,12 +131,15 @@ function waitForExternalSubmit(kind: InputKind): Promise<string> {
 }
 
 async function pollGmailOtp(auth: OAuth2Client, since?: Date): Promise<string> {
-  const sinceDate = since ?? new Date(Date.now() - 5 * 60_000);
+  // Default `since` is "now" — fail safe if a caller forgets to pass the click
+  // timestamp. Old default (5 minutes back) caused us to pick up stale OTPs
+  // from prior login attempts. Callers SHOULD pass an explicit `since`.
+  const sinceDate = since ?? new Date();
   return fetchCibusOtp({ auth, since: sinceDate, timeoutMs: 24 * 60 * 60_000, pollMs: 5_000 });
 }
 
 async function pollGmailMagicLink(auth: OAuth2Client, expectEmail: string, since?: Date): Promise<string> {
-  const sinceDate = since ?? new Date(Date.now() - 5 * 60_000);
+  const sinceDate = since ?? new Date();
   return fetchWoltMagicLink({ auth, since: sinceDate, expectEmail, timeoutMs: 24 * 60 * 60_000, pollMs: 10_000 });
 }
 

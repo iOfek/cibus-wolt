@@ -89,7 +89,7 @@ export async function runDrainCommand(opts: DrainOpts = {}): Promise<void> {
   logPhaseBanner(4, 5, "Balance fetch");
   const balance = await getCibusWeeklyBalance(config.cibus, {
     auth,
-    fetchOtp: () => resolveOtp(5 * 60_000, { auth, allowStdin: true }),
+    fetchOtp: (since) => resolveOtp(5 * 60_000, { auth, allowStdin: true, since }),
   });
   const maxSpendable = Math.floor(balance);
 
@@ -141,7 +141,7 @@ export async function runDrainCommand(opts: DrainOpts = {}): Promise<void> {
       auth,
       dryRun,
       screenshotDir,
-      fetchOtp: () => resolveOtp(5 * 60_000, { auth, allowStdin: true }),
+      fetchOtp: (since) => resolveOtp(5 * 60_000, { auth, allowStdin: true, since }),
     });
     await appendRun({ ts: new Date().toISOString(), amount, status: result.status, url: result.url });
     logger.info(`✓ Run complete: ${result.status}`);

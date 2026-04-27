@@ -15,8 +15,12 @@ export interface BuyGiftCardOpts {
   auth?: OAuth2Client;
   dryRun: boolean;
   screenshotDir: string;
-  /** Override to fetch the Cibus OTP from an external source (MCP pause/resume). */
-  fetchOtp?: () => Promise<string>;
+  /**
+   * Override to fetch the Cibus OTP from an external source (MCP pause/resume).
+   * Receives the click-submit timestamp so the resolver can filter out OTPs
+   * issued before the SMS-trigger click.
+   */
+  fetchOtp?: (since: Date) => Promise<string>;
 }
 
 export interface BuyGiftCardResult {
@@ -263,7 +267,7 @@ async function signInWithOtp(
   cibusFrame: FrameLocator,
   username: string,
   auth: OAuth2Client | undefined,
-  fetchOtp?: () => Promise<string>,
+  fetchOtp?: (since: Date) => Promise<string>,
 ): Promise<void> {
   logger.info("Cibus sign-in: OTP mode");
 
@@ -309,7 +313,7 @@ async function signInWithOtp(
 
   let code: string;
   if (fetchOtp) {
-    code = await fetchOtp();
+    code = await fetchOtp(submittedAt);
   } else if (auth) {
     code = await fetchCibusOtp({
       auth,
@@ -389,7 +393,7 @@ async function signInCibusPopup(
   page: Page,
   creds: { username: string; password: string; authMode: "password" | "otp" },
   auth: OAuth2Client | undefined,
-  fetchOtp?: () => Promise<string>,
+  fetchOtp?: (since: Date) => Promise<string>,
 ): Promise<void> {
   logger.info({ authMode: creds.authMode }, "Waiting for Cibus iframe to render (up to 30s)");
 
@@ -437,8 +441,14 @@ async function handleMaybeSecondMfa(
   page: Page,
   cibusFrame: FrameLocator,
   auth: OAuth2Client | undefined,
-  fetchOtp: (() => Promise<string>) | undefined,
+  fetchOtp: ((since: Date) => Promise<string>) | undefined,
 ): Promise<void> {
+  // Floor for OTP freshness: capture before we start watching. Cibus triggers
+  // the second SMS after the first OTP submit (which already happened); the
+  // forwarded email's internalDate will be later than this in practice
+  // because of iOS Shortcut → Gmail forwarding latency.
+  const watchStartedAt = new Date();
+
   const confirmBtn = cibusFrame.locator('button.cib-btn:has-text("אישור התשלום")').first();
   const otpField = cibusFrame
     .locator(
@@ -462,8 +472,8 @@ async function handleMaybeSecondMfa(
     await tickRememberInFrame(cibusFrame);
     const { resolveOtp } = await import("./inputs.ts");
     const code = fetchOtp
-      ? await fetchOtp()
-      : await resolveOtp(5 * 60_000, { auth, allowStdin: true });
+      ? await fetchOtp(watchStartedAt)
+      : await resolveOtp(5 * 60_000, { auth, allowStdin: true, since: watchStartedAt });
     await otpField.fill(code);
     await page.waitForTimeout(400);
     // Tick remember checkbox if present (second MFA often shows it too)

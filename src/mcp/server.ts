@@ -124,7 +124,7 @@ async function runDrainBackground(runId: string, dryRun: boolean, requestedAmoun
 
     const balance = await getCibusWeeklyBalance(config.cibus, {
       auth: auth ?? undefined,
-      fetchOtp: () => resolveOtp(5 * 60_000, { auth: auth ?? undefined, allowStdin: false }),
+      fetchOtp: (since) => resolveOtp(5 * 60_000, { auth: auth ?? undefined, allowStdin: false, since }),
     });
     const maxSpendable = Math.floor(balance);
 
@@ -173,7 +173,7 @@ async function runDrainBackground(runId: string, dryRun: boolean, requestedAmoun
         auth: auth ?? undefined,
         dryRun,
         screenshotDir,
-        fetchOtp: () => resolveOtp(5 * 60_000, { auth: auth ?? undefined, allowStdin: false }),
+        fetchOtp: (since) => resolveOtp(5 * 60_000, { auth: auth ?? undefined, allowStdin: false, since }),
       });
       await appendRun({ ts: new Date().toISOString(), amount, status: result.status, url: result.url });
       finishRun(runId, "completed", { status: result.status, amount, url: result.url });

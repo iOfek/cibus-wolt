@@ -16,8 +16,12 @@ export interface CibusCreds {
 
 export interface GetBalanceOpts {
   auth?: OAuth2Client;
-  /** Override to fetch MFA OTP from an external source (e.g. MCP pause/resume). */
-  fetchOtp?: () => Promise<string>;
+  /**
+   * Override to fetch MFA OTP from an external source (e.g. MCP pause/resume).
+   * Receives the SMS-trigger click timestamp so the resolver can reject OTPs
+   * issued before it.
+   */
+  fetchOtp?: (since: Date) => Promise<string>;
 }
 
 const LOGIN_URL = "https://consumers.pluxee.co.il/login";
@@ -113,7 +117,7 @@ async function doLogin(
   creds: CibusCreds,
   shot: (name: string) => Promise<void>,
   auth?: OAuth2Client,
-  fetchOtpOverride?: () => Promise<string>,
+  fetchOtpOverride?: (since: Date) => Promise<string>,
 ): Promise<void> {
   if (!page.url().includes("/login")) {
     await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" });
@@ -179,7 +183,7 @@ async function doLogin(
     let code: string | null = null;
     if (fetchOtpOverride) {
       try {
-        code = await fetchOtpOverride();
+        code = await fetchOtpOverride(otpSubmittedAt);
         logger.info("OTP received from external submitter (MCP)");
       } catch (e) {
         logger.warn({ err: e instanceof Error ? e.message : String(e) }, "External OTP fetch failed — trying Gmail/stdin fallback");
@@ -381,7 +385,7 @@ async function clickEnabled(page: Page, selectors: string[], label: string): Pro
  */
 export async function triggerCibusSmsAndCompleteLogin(
   username: string,
-  fetchOtp: () => Promise<string>,
+  fetchOtp: (since: Date) => Promise<string>,
 ): Promise<{ ok: boolean; reason: string; code?: string }> {
   // Wipe so the login is fresh and SMS fires unconditionally.
   await fs.rm(paths.chromeProfileCibus, { recursive: true, force: true });
@@ -418,6 +422,7 @@ export async function triggerCibusSmsAndCompleteLogin(
     await page.waitForTimeout(500);
     await ensureRememberMe(page);
 
+    const otpSubmittedAt = new Date();
     await clickEnabled(
       page,
       [
@@ -441,7 +446,7 @@ export async function triggerCibusSmsAndCompleteLogin(
     // Hand off to caller to fetch the code (Gmail / webhook poll).
     let code: string;
     try {
-      code = await fetchOtp();
+      code = await fetchOtp(otpSubmittedAt);
     } catch (e) {
       return { ok: false, reason: e instanceof Error ? e.message : String(e) };
     }
