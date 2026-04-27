@@ -1,278 +1,189 @@
 # cibus-wolt
 
-Drain leftover weekly Cibus balance into a Wolt gift card on your own account before it expires.
+Drain your weekly Cibus balance into a Wolt gift card before it expires.
 
-Cibus (Pluxee) gives Israeli tech employees a weekly meal benefit that **evaporates if unused**. Wolt already accepts Cibus as payment, and gift cards there are valid 5 years. So the idea is simple: spend down your remaining balance by buying yourself a Wolt gift card every Friday, automatically.
+Cibus (Pluxee) gives Israeli tech employees a weekly meal benefit that vanishes if you don't spend it. Wolt accepts Cibus as payment, and Wolt gift cards are valid for 5 years. So this tool turns "didn't eat enough at restaurants this week" into "Wolt credit I can use whenever."
 
-This repo is a personal tool. Cibus and Wolt terms probably prohibit automation — use at your own risk. MIT-licensed, no employer affiliation.
+> Personal use, at your own risk. Cibus and Wolt's terms probably don't allow automation.
 
-## TL;DR
+## Quick start
 
 ```sh
 git clone <this repo>
 cd cibus
 npm install
 npx playwright install chromium
-npx cibus-wolt setup        # interactive wizard
-npx cibus-wolt run          # actually drain (opens Chrome so you can watch)
+npx cibus-wolt setup       # interactive, ~5 minutes
+npx cibus-wolt run         # actually drain (Chrome opens so you can watch)
 ```
 
-The wizard's first question is "Do you use Claude (Code, Desktop, or Claude.ai)?".
+That's it. The wizard walks you through everything below.
 
-- **Yes** → it walks you through the Claude MCP setup (auto-detects Claude Code + Desktop, optionally adds Claude.ai web for phone access via ngrok/devtunnel). Claude orchestrates everything; OTPs come through Claude's own Gmail integration.
-- **No** → it asks how you'd like the Cibus OTP delivered: `gmail` (poll your Gmail), `webhook` (iOS Shortcut → ngrok/devtunnel), or `terminal` (type it when prompted).
+## What `setup` asks you
 
-| You want to…                                  | Pick                       |
-|-----------------------------------------------|----------------------------|
-| Trigger from Claude (Code, Desktop, or web)   | **Claude MCP**             |
-| Trigger from my phone, no Claude              | **Webhook (ngrok/devtunnel)** |
-| Run it from my laptop, type OTP at prompt     | **Terminal** (or **Gmail** for unattended local) |
+The wizard runs once and asks, in order:
 
-Re-run `setup` anytime to add another path; it shows current values and is safe to repeat.
+1. **Cibus + Wolt credentials** — username, password, company.
+2. **OTP delivery** — how the 6-digit Cibus SMS code reaches the tool. Pick one (see next section).
+3. **Wolt login** — opens Chrome once, you sign in manually. Done forever; the cookie auto-refreshes on every drain.
+4. **Schedules** — optional. Add a recurring drain (e.g. every Friday morning).
+5. **Smoke test** — runs `status` and an optional dry-run drain.
+6. **Claude integration** — optional. Adds the tool to Claude Code, Claude Desktop, and/or Claude.ai mobile so you can drive drains from a chat.
 
-## How it works
+You can skip any of 4–6. Re-run `setup` anytime — it remembers your previous answers.
 
-Under the hood, one `cibus-wolt run`:
+## OTP delivery — pick one
 
-1. Fetches your weekly Cibus balance via a headful Google Chrome session at `consumers.pluxee.co.il` (dedicated profile at `~/.cibus-wolt/chrome-profile`, session persists across runs).
-2. Navigates to `wolt.com/en/gift-card-shop/isr`, picks "Other" with your exact leftover amount, clicks Continue.
-3. Pays with Cibus via the in-Wolt Cibus popup (permanent-password mode by default; OTP mode available).
-4. Clicks Redeem — credit lands on your Wolt account.
+When Cibus forces a re-auth (occasionally, especially the first time), it texts a 6-digit code to your phone. The tool needs that code on the laptop. Three ways to get it there:
 
-## Why the extra setup options?
 
-The only thing the automation can't get on its own is the **Cibus SMS OTP** — a 6-digit code SMS'd to your phone when Cibus forces re-auth. Arrives on the phone, we need it on the laptop.
+| Option       | What you do                                                                    | Best for                                                               |
+| ------------ | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
+| **Terminal** | Type the code when prompted                                                    | Running drains by hand, at the laptop. Zero setup.                     |
+| **Gmail**    | iOS Shortcut forwards the SMS to your Gmail; the tool polls Gmail and reads it | Unattended runs (e.g. scheduled). One-time GCP project setup.          |
+| **Webhook**  | iOS Shortcut POSTs the SMS to the tool via ngrok or devtunnel                  | Triggering drains from your phone too. One-time tunnel + ngrok signup. |
 
-(Wolt login is one-time manual: `cibus-wolt wolt-login` opens Chrome to the Wolt login page, you sign in once, the session cookie is saved to the dedicated profile, and every subsequent drain silently refreshes its expiry. No magic-link plumbing — Wolt's bot detection rejected it on fresh profiles anyway.)
 
-Sources that can deliver the OTP:
+The wizard asks which one and walks you through the chosen path's setup.
 
-| Source | How it gets the signal | What you need |
-|---|---|---|
-| **Terminal prompt** | You type the 6 digits when prompted | Nothing. Only works if you're at the laptop during the drain. |
-| **Gmail OAuth** | Tool polls your Gmail for a forwarded SMS (subject `cibus-otp`) | Gmail account + one-time GCP project (OAuth client ID) + iOS Shortcut that forwards the SMS to your Gmail. |
-| **Phone webhook** | iOS Shortcut extracts the 6 digits and POSTs to our server | ngrok or devtunnel + iOS Shortcut (~2 min one-time each). Works from cellular. |
-| **Claude MCP** | Claude reads the OTP via its Gmail integration (you forward SMS to Gmail, subject `cibus-otp`), OR you type the 6 digits in chat | Claude (Code, Desktop, or web). iOS Shortcut only if you want OTPs fully automatic. |
+**Both Gmail and Webhook options need an iOS Shortcut.** See [iOS Shortcut setup](#ios-shortcut-setup) below.
 
-**Why forwarding at all**: Cibus OTPs come by SMS. Neither Claude nor our Gmail poller can read SMS directly. Either you type the 6 digits manually when asked, or one iOS Shortcut forwards the SMS to a place an integration can read.
+## Claude integration (optional)
 
-**Remote control** (trigger a drain from your phone / away from the laptop) requires **Webhook** or **Claude MCP with phone access** — both give you a public URL. Local-only setups: terminal or Gmail.
+If you'd rather drive drains from a Claude chat ("drain my balance", "what's my cibus balance?"), the wizard installs an MCP server into your Claude clients. All three are independent — pick whichever you actually use:
 
-State lives at `~/.cibus-wolt/`:
+- **Claude Code** (CLI) — registered via `claude mcp add`. Available in any Claude Code session.
+- **Claude Desktop** — added to `claude_desktop_config.json`. After Desktop restarts, Claude can call the tool.
+- **Claude.ai mobile / web** ("phone access") — needs a tunnel (ngrok or devtunnel). The wizard prints a paste-ready URL for [claude.ai/customize/connectors](https://claude.ai/customize/connectors). Custom Connectors registered there also sync to Claude Desktop via your account.
 
-| Path                    | What                                   |
-|-------------------------|----------------------------------------|
-| `.env`                  | Credentials (0600)                     |
-| `chrome-profile/`       | Wolt session cookies                   |
-| `chrome-profile-cibus/` | Cibus portal session cookies           |
-| `webhook-token`         | Random secret for the webhook URL path |
-| `tunnel-hostname`       | Your stable public hostname (ngrok or devtunnel) |
-| `tunnel-kind`           | `ngrok` (default) or `devtunnel`       |
-| `devtunnel-id`          | Local Azure Dev Tunnel name (devtunnel only) |
-| `runs.jsonl`            | Append-only run log                    |
-| `logs/`, `screenshots/` | Debug output                           |
+If you set up Gmail OAuth in the OTP delivery step, the tool's Gmail poller handles OTPs in the background and Claude doesn't need its own Gmail integration. Otherwise Claude will ask you to type the OTP in chat each time Cibus re-auths (or you can enable Claude Desktop's built-in Gmail connector for unattended reads).
 
-## Install walkthroughs
-
-Pick one and follow top-to-bottom. You can always add another path later by running `npx cibus-wolt setup` again — prompts show current values so it's safe to re-run. Per-feature commands also exist (`claude-code-mcp`, `claude-desktop-mcp`, `phone-setup`) for adding pieces without re-walking the whole wizard.
-
-### I. CLI-only (simplest)
-
-You run drains from your laptop's terminal. Nothing else.
+## Daily use
 
 ```sh
-npx cibus-wolt setup
-# → answer Cibus creds
-# → "How should we deliver the Cibus OTP?" → terminal
-# → say no to Claude Code install + phone access at the end
-npx cibus-wolt run
+cibus-wolt run                # full drain
+cibus-wolt run --dry-run      # everything except the final payment confirm
+cibus-wolt run --amount 50    # spend exactly 50 ₪ (must be ≤ available)
+cibus-wolt balance            # just print the current Cibus balance
+cibus-wolt status             # auth + last-run state
+cibus-wolt schedule add       # add a recurring drain
 ```
 
-When Cibus asks for an SMS OTP (first login / rarely after that if "זכור" was ticked), you type the 6-digit code in the terminal. When Wolt's session expires (every few weeks), run `npx cibus-wolt wolt-login` and sign in manually — the new session is reused on every subsequent drain.
+When Wolt's session eventually expires (12+ months without a drain, or a Wolt-side rotation), run `cibus-wolt wolt-login` to re-sign in.
 
-**That's the whole install.** No services, no tunnel, no signups.
+## iOS Shortcut setup
 
-### II. CLI + phone webhook (ngrok)
+Both **Gmail** and **Webhook** OTP options need a Shortcut that forwards Cibus SMS messages. Same trigger, different action.
 
-You want to trigger drains from your phone and have your iPhone Shortcut deliver the Cibus OTP automatically.
+**Trigger** (both flavors):
 
-**Setup:**
+1. iOS Shortcuts app → **Automation** tab → **+** → **Message**
+2. Filter: **Sender** is your Cibus SMS sender (+972 1-700-701-130), **Message** contains `קוד האימות`
+3. Turn off "Run After Confirmation" so it fires silently
 
-```sh
-npx cibus-wolt setup
-# → answer Cibus creds
-# → "How should we deliver the Cibus OTP?" → webhook
-# → wizard walks through ngrok install + free static domain (see below)
-# → say no to Claude Code install + phone access at the end (unless you want them)
-```
+**Action — Gmail option:**
 
-The ngrok step:
-1. Installs ngrok if needed — `brew install ngrok` on macOS, `winget install --id Ngrok.Ngrok -e` on Windows.
-2. Sign up free at https://dashboard.ngrok.com/signup (no credit card)
-3. Paste your authtoken — wizard runs `ngrok config add-authtoken`
-4. Reserve one free static domain at https://dashboard.ngrok.com/domains (pick any `<name>.ngrok-free.app`)
-5. Wizard writes it to `~/.cibus-wolt/tunnel-hostname` and installs background services (launchd on macOS, Task Scheduler on Windows)
-
-**Blocked by your corp network?** ngrok is blocked on many Microsoft corporate networks. Use Azure Dev Tunnels instead — Microsoft's first-party tunnel, signed in with your personal MS account:
-
-```sh
-npx cibus-wolt devtunnel-setup
-# → installs `devtunnel` (winget on Windows, brew --cask on macOS)
-# → opens browser for Microsoft account sign-in (use a *personal* MS account —
-#   work tenants often block --allow-anonymous)
-# → creates a persistent tunnel `cibus-wolt` with --allow-anonymous
-# → writes the resulting `<name>-3737.<cluster>.devtunnels.ms` hostname and
-#   installs background services
-```
-
-Stable URL across reboots, same `/webhook/<token>/...` and `/mcp/<token>` endpoints — only the hostname differs. If `--allow-anonymous` is rejected by your tenant policy, sign in with a personal MS account (not work) and re-run.
-
-After that, `npx cibus-wolt webhook-url` prints your three stable URLs:
-
-```
-POST https://<name>.ngrok-free.app/webhook/<token>/drain  body: {"dry_run"?: boolean, "amount"?: number}
-POST https://<name>.ngrok-free.app/webhook/<token>/otp    body: {"code": "123456"}
-```
-
-By default the drain spends your full available balance. Pass `"amount": 50` to spend exactly 50 ₪ (must be ≤ available).
-
-**iOS Shortcut — Cibus OTP forwarder to webhook (~2 min):**
-
-1. iPhone Shortcuts app → **Automation** tab → **+** → **Message**.
-2. Filter: **Sender** is your Cibus SMS sender (e.g. Pluxee) **and** **Message** contains `קוד האימות`. That alone scopes it to OTP SMS — no regex needed.
-3. Action: **Get Contents of URL** — method POST, URL `https://<name>.ngrok-free.app/webhook/<token>/otp`, headers `Content-Type: application/json`, Request Body (JSON): `{"code": <Message>}`. The server extracts the 6-digit code from the raw SMS text.
-4. Turn off "Run After Confirmation" so it fires silently.
-
-**Trigger a drain from your phone:** use Shortcuts → **+** → "Get Contents of URL" with POST to `.../webhook/<token>/drain`, body `{"dry_run": false}`. Put it on your home screen.
-
-Android: Tasker's HTTP Request task does the same thing — same URLs, same JSON bodies.
-
-### III. CLI + Claude
-
-Claude orchestrates the drain. Wolt is already logged in (one-time `cibus-wolt wolt-login`); Claude doesn't need to touch it. The only thing Claude can't do on its own is read the **Cibus SMS OTP** — for OAuth-based unattended reads, either set up our Gmail OAuth in the main wizard (covers Claude Code's MCP child via the same backend poller) or enable Claude Desktop's built-in Gmail connector (account-level Google OAuth). Otherwise, type the OTP in chat each time.
-
-The main `setup` wizard offers **all three** Claude paths at the end (after creds, Wolt, schedules). You can also re-run individual pieces via dedicated commands:
-
-#### Claude Code (CLI)
-
-Has no built-in Gmail. Reads OTPs via whatever the backend OTP delivery does — if you picked `gmail` in the main wizard, the MCP child polls Gmail with our OAuth refresh token and submits OTPs to the bus automatically.
-
-```sh
-npx cibus-wolt setup            # full wizard — at the end, Y/n on Claude Code
-# OR, after main setup is done:
-npx cibus-wolt claude-code-mcp  # standalone install
-```
-
-In any Claude Code session: `what's my cibus balance?` → `start a dry drain`. If Cibus prompts for OTP and the backend can't auto-resolve it (no Gmail OAuth + no webhook), Claude asks you in chat and calls `submit_otp` with whatever you type.
-
-#### Claude Desktop
-
-Has a built-in Gmail connector (Google OAuth, account-bound). When enabled, Claude Desktop reads the SMS-forwarded `cibus-otp` email itself and submits via `submit_otp`. Independent from Claude Code's config.
-
-```sh
-npx cibus-wolt setup              # full wizard — at the end, Y/n on Claude Desktop
-# OR:
-npx cibus-wolt claude-desktop-mcp # standalone install
-```
-
-After install: quit + reopen Claude Desktop, then enable Gmail at **Settings → Connectors → Gmail → Connect**. Ask `what's my cibus balance?` to verify the MCP loaded.
-
-#### Claude.ai web / mobile (phone access)
-
-Custom Connectors registered at [claude.ai/customize/connectors](https://claude.ai/customize/connectors) sync to Claude.ai web AND mobile AND Claude Desktop (via your Claude account). They do NOT sync to Claude Code. Setting one up gives you remote-trigger from anywhere you're signed into Claude.
-
-```sh
-npx cibus-wolt phone-setup
-# → preflight: requires Cibus creds + Claude Code OR Desktop already installed
-# → walks tunnel setup (ngrok or devtunnel) + Custom Connector URL
-```
-
-The wizard prints a paste-ready URL. Register it at [claude.ai/customize/connectors](https://claude.ai/customize/connectors) → Add custom connector. Name it `Cibus-Wolt`, leave OAuth fields blank.
-
-**SMS is the unskippable bit.** Cibus OTPs come by SMS, which no integration can read directly. Either you live with a short chat interruption when an OTP is needed, or you set up one iOS Shortcut (SMS → Gmail) once — see the section below.
-
-## Gmail (optional)
-
-Used by paths (b) and (d) — our Gmail poller or Claude's Gmail integration reads the **Cibus OTP forwarded as email** (subject `cibus-otp`, sent by your iOS Shortcut). Skip if you're only using the webhook (c) or terminal (a) paths.
-
-```sh
-# Set up a GCP project one-time (desktop OAuth client, gmail.readonly scope)
-# Append to ~/.cibus-wolt/.env:
-GOOGLE_CLIENT_ID=xxx.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=GOCSPX-xxx
-```
-
-First run opens a browser for OAuth consent. Refresh token → `~/.cibus-wolt/token.json`.
-
-### iOS Shortcut — forward Cibus SMS to Gmail
-
-Needed for paths **(b)** and **(d)** if you want OTPs fully automatic. Cibus OTPs arrive as SMS, but the tool / Claude reads Gmail — so this Shortcut bridges them.
+- **Send Email** to your own Gmail. Subject: `cibus-otp`. Body: `<Message>` (the magic variable for the SMS text).
 
 https://github.com/user-attachments/assets/2101f9d0-8767-42cb-a30d-7169dcec7544
 
-1. Shortcuts → **Automation** → **+** → **Message**.
-2. Filter: **Sender** is your Cibus SMS sender (e.g. Pluxee) **and** **Message** contains `קוד האימות`.
-3. Action: **Send Email** — to your own Gmail, subject `cibus-otp`, body `<Message>`. The server extracts the 6-digit code from the raw SMS text.
-4. Turn off "Run After Confirmation".
+**Action — Webhook option:**
 
-Without this, OTP delivery is manual: Claude will ask you for the 6 digits in chat, or the terminal will prompt you.
+- **Get Contents of URL**, method POST. URL: from `cibus-wolt webhook-url`. Headers: `Content-Type: application/json`. Body: `{"code": <Message>}`.
 
-## CLI reference
+The tool extracts the 6-digit code from the raw SMS text — you don't need to parse it yourself.
 
-```
-cibus-wolt setup                Main wizard. Ends with optional Claude Code install + phone access.
-cibus-wolt wolt-login           Open Chrome to log in to Wolt manually (when session expired)
-cibus-wolt claude-code-mcp      Install cibus-wolt MCP into Claude Code. Requires `setup` first.
-cibus-wolt claude-desktop-mcp   Install cibus-wolt MCP into Claude Desktop. Requires `setup` first.
-cibus-wolt phone-setup          Phone access (Custom Connector via tunnel). Requires Code or Desktop installed.
-cibus-wolt stable-tunnel        Set up ngrok static domain
-cibus-wolt devtunnel-setup      Set up Azure Dev Tunnels (alternative when ngrok is blocked)
-cibus-wolt run [--dry-run] [--amount N]
-                            Run a drain. --amount N spends exactly N ₪ (≤ available).
-cibus-wolt balance          Just fetch the Cibus balance
-cibus-wolt status           Show auth + session state for each phase
-cibus-wolt webhook-url      Print current webhook URLs
-cibus-wolt rotate-token     Regenerate the webhook token
-cibus-wolt reset <scope>    Wipe cached state (all|gmail|cibus|wolt|webhook|logs)
-cibus-wolt logs             Print latest log
-```
-
-## How long does the Wolt session last?
-
-After a manual `cibus-wolt wolt-login`, Wolt sets two cookies on `.wolt.com`:
-
-| Cookie | Purpose | Expiry |
-|---|---|---|
-| `__wtoken` | Access token | ~1 year from issuance |
-| `__wrtoken` | Refresh token | ~1 year from issuance |
-
-Each `cibus-wolt run` does a quick authenticated `/me` hit before the drain. That triggers Wolt's sliding-window refresh, which re-issues both cookies with a fresh ~1-year expiry. So:
-
-- **Drain weekly or monthly** — the drain itself is the keep-alive. The session never realistically expires.
-- **Skip the tool for 12+ months, or Wolt forces a security rotation** — you'll see "no Wolt session cookie" on the next run. Run `npx cibus-wolt wolt-login` to re-authenticate.
-
-There's no separate keep-alive command on purpose — the drain already does the right thing.
-
-## Safety
-
-- Secrets only live in `~/.cibus-wolt/.env` (0600). Not logged, not shipped.
-- Webhook endpoints authenticate via a 256-bit token in the URL path. HTTPS via ngrok. Anyone with the full URL can trigger drains, but funds always go to *your own* Wolt account — no attacker-usable payout. Rotate anytime: `npx cibus-wolt rotate-token`.
-- `MIN_AMOUNT` (default 10 ₪) and `MAX_SPEND` (default 1200 ₪) bound what a single run can spend.
-- `--dry-run` runs the entire flow up to (but not including) the final Cibus payment confirm.
+Android: Tasker's HTTP Request task does the same thing for the webhook option.
 
 ## Troubleshooting
 
-- **Cibus asks for MFA every time** — the "זכור" (remember) checkbox wasn't ticked. Latest version ticks it automatically; if it's still happening, check the screenshots in `~/.cibus-wolt/screenshots/<latest>/` and file an issue.
-- **Wolt session expired / "no Wolt session cookie"** — run `npx cibus-wolt wolt-login`. Opens Chrome to Wolt's login page; sign in manually, press Enter, done. The session cookie is reused on every subsequent drain and silently refreshed (see "How long does the Wolt session last?" below).
-- **ngrok URL 404** — token rotated or domain changed. Run `npx cibus-wolt webhook-url` for current values; update your iOS Shortcut.
-- **Selectors broken** — Wolt/Cibus redesigned their UI. Check `~/.cibus-wolt/screenshots/<latest>/` to see where, update the selector in `src/wolt.ts` or `src/cibus.ts`.
+- **Cibus asks for OTP every time** — the "זכור" (remember) checkbox wasn't ticked. The tool ticks it automatically; if it's still happening, check `~/.cibus-wolt/screenshots/<latest>/` and file an issue.
+- **Wolt says "no Wolt session cookie"** — run `cibus-wolt wolt-login` and sign in again.
+- **OTP doesn't arrive** — check your iOS Shortcut is enabled and "Run After Confirmation" is off. Verify the Shortcut sends to the right Gmail address / webhook URL (`cibus-wolt webhook-url` prints the current one).
+- **Selectors broken** — Wolt or Cibus redesigned their UI. Check `~/.cibus-wolt/screenshots/<latest>/` to see where, then update the selector in `src/wolt.ts` or `src/cibus.ts`.
 
-## What's next / known gaps
+## Safety
 
-- Built-in scheduling exists (`cibus-wolt schedule add`) but only fires while the background MCP service is running. Install via `npm run install-bg`.
-- Not on npm. Clone + `npm install` for now.
-- Supported OSes: macOS (launchd) and Windows 10+ / Windows 11 (Task Scheduler) for both the CLI and the auto-start background services. PowerShell is the default shell on Windows. Linux works for the CLI but the auto-start path isn't wired up yet — run `npm run mcp` under your own systemd unit if you need it.
+- Credentials live in `~/.cibus-wolt/.env` (mode 0600). Not logged, not shipped.
+- Webhook endpoints are protected by a 256-bit token in the URL path. Anyone with the full URL can trigger drains, but funds always go to **your own** Wolt account — no attacker-usable payout. Rotate anytime with `cibus-wolt rotate-token`.
+- `MIN_AMOUNT` (default 10 ₪) and `MAX_SPEND` (default 1200 ₪) bound what a single run can spend.
+- `--dry-run` runs the full flow except the final Cibus payment confirm.
 
-## License
+---
+
+## Appendix
+
+### State directory layout
+
+Everything lives under `~/.cibus-wolt/`:
+
+
+| Path                    | What                                        |
+| ----------------------- | ------------------------------------------- |
+| `.env`                  | Credentials (0600)                          |
+| `chrome-profile/`       | Wolt session cookies                        |
+| `chrome-profile-cibus/` | Cibus portal session cookies                |
+| `webhook-token`         | Random secret for the webhook URL path      |
+| `tunnel-hostname`       | Stable public hostname (ngrok or devtunnel) |
+| `tunnel-kind`           | `ngrok` or `devtunnel`                      |
+| `runs.jsonl`            | Append-only run log                         |
+| `logs/`, `screenshots/` | Debug output                                |
+
+
+### Full CLI reference
+
+```
+cibus-wolt setup                  Main wizard. Re-runnable; remembers values.
+cibus-wolt run [--dry-run] [--amount N]
+                                  Drain. --amount N spends exactly N ₪ (≤ available).
+cibus-wolt balance                Print the current Cibus balance
+cibus-wolt status                 Auth + last-run state
+cibus-wolt logs                   Print the latest log
+cibus-wolt webhook-url            Print current webhook + MCP URLs
+cibus-wolt rotate-token           Rotate the webhook token
+cibus-wolt wolt-login             Re-sign in to Wolt manually
+cibus-wolt reset <scope>          Wipe state. Scope: all|gmail|cibus|wolt|webhook|logs
+cibus-wolt schedule <sub>         Manage schedules: list|add|edit|remove|enable|disable|cadence
+
+# Re-add a single piece without re-walking the whole wizard:
+cibus-wolt claude-code-mcp        Install MCP into Claude Code only
+cibus-wolt claude-desktop-mcp     Install MCP into Claude Desktop only
+cibus-wolt phone-setup            Set up phone access (tunnel + Custom Connector)
+cibus-wolt stable-tunnel          Set up ngrok static domain only
+cibus-wolt devtunnel-setup        Set up Azure Dev Tunnels only
+
+cibus-wolt help                   Show all commands
+```
+
+### How the Wolt session stays alive
+
+After `cibus-wolt wolt-login`, Wolt sets two cookies (`__wtoken`, `__wrtoken`) valid ~1 year. Each drain does a quick authenticated `/me` hit before doing anything, which triggers Wolt's sliding-window refresh — both cookies get re-issued with a fresh ~1-year expiry.
+
+So if you drain weekly or monthly, the session never realistically expires. Skip the tool for 12+ months (or Wolt forces a rotation) and you'll see "no Wolt session cookie" — run `cibus-wolt wolt-login` to re-authenticate.
+
+### How OTP delivery composes
+
+The tool has a single internal "input bus" for OTPs. Multiple delivery options can be active simultaneously — first to respond wins. Examples:
+
+- Gmail OAuth + terminal prompt: tool polls Gmail; if you happen to be at the laptop, you can also just type the code.
+- Webhook + Claude Desktop's Gmail connector: phone-side Shortcut posts to webhook; Claude reads Gmail. Whichever lands first.
+
+You don't pick "instead of" — the wizard's question is just about which paths to actually configure.
+
+### ngrok vs devtunnel
+
+ngrok is the default. Free static domain on `*.ngrok-free.app`, no credit card.
+
+Use `cibus-wolt devtunnel-setup` (Microsoft Azure Dev Tunnels) if ngrok is blocked on your network — common on Microsoft corporate Wi-Fi. Sign in with a **personal** MS account; work tenants often block `--allow-anonymous`.
+
+Stable URL across reboots, same `/webhook/<token>/...` and `/mcp/<token>` endpoints — only the hostname differs.
+
+### Known gaps
+
+- Scheduled drains only fire while background services are running. Install via `npm run install-bg`.
+- Not on npm — clone + `npm install` for now.
+- Supported OSes: macOS (launchd) and Windows 10+/11 (Task Scheduler) for both the CLI and the auto-start background services. Linux works for the CLI but auto-start isn't wired up — run `npm run mcp` under your own systemd unit if you need it.
+
+### License
 
 MIT. Personal use. At your own risk with respect to Pluxee / Wolt terms of service.
