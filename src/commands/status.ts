@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 import { config } from "../config.ts";
 import { tryLoadAuthClient } from "../gmail.ts";
 import { ensureStateDir } from "../paths.ts";
@@ -10,6 +11,9 @@ import {
 } from "../phases.ts";
 import { describeSchedule, loadSchedulesState } from "../schedules.ts";
 import { nextFireTime, readMissed } from "../scheduler.ts";
+import {
+  bold, cmd, cyan, dim, green, padVisible, red, visibleLength,
+} from "../ui.ts";
 
 interface Row {
   n: string;
@@ -19,24 +23,22 @@ interface Row {
 }
 
 function fmt(s: PhaseStatus): { state: string; detail: string } {
-  return s.ok ? { state: "✓ cached", detail: s.summary } : { state: "✗ needs login", detail: s.reason };
+  return s.ok
+    ? { state: `${green("✓")} cached`, detail: s.summary }
+    : { state: `${red("✗")} needs login`, detail: s.reason };
 }
 
 function printTable(rows: Row[]): void {
   const widths = {
-    n: Math.max(3, ...rows.map((r) => r.n.length)),
-    name: Math.max(8, ...rows.map((r) => r.name.length)),
-    state: Math.max(12, ...rows.map((r) => r.state.length)),
+    n: Math.max(3, ...rows.map((r) => visibleLength(r.n))),
+    name: Math.max(8, ...rows.map((r) => visibleLength(r.name))),
+    state: Math.max(12, ...rows.map((r) => visibleLength(r.state))),
   };
-  const pad = (s: string, w: number) => s + " ".repeat(Math.max(0, w - [...s].length));
-  const header = `${pad("#", widths.n)}  ${pad("Phase", widths.name)}  ${pad("State", widths.state)}  Detail`;
-  // eslint-disable-next-line no-console
+  const header = `${padVisible(bold("#"), widths.n)}  ${padVisible(bold("Phase"), widths.name)}  ${padVisible(bold("State"), widths.state)}  ${bold("Detail")}`;
   console.log(header);
-  // eslint-disable-next-line no-console
-  console.log("-".repeat(header.length));
+  console.log(dim("-".repeat(widths.n + widths.name + widths.state + 6 + 20)));
   for (const r of rows) {
-    // eslint-disable-next-line no-console
-    console.log(`${pad(r.n, widths.n)}  ${pad(r.name, widths.name)}  ${pad(r.state, widths.state)}  ${r.detail}`);
+    console.log(`${padVisible(cyan(r.n), widths.n)}  ${padVisible(bold(r.name), widths.name)}  ${padVisible(r.state, widths.state)}  ${dim(r.detail)}`);
   }
 }
 
@@ -62,51 +64,41 @@ export async function runStatusCommand(): Promise<void> {
   const wolt = fmt(await checkWoltSession());
   rows.push({ n: "[3/5]", name: "Wolt", state: wolt.state, detail: wolt.detail });
 
-  rows.push({ n: "[4/5]", name: "Balance", state: "—", detail: "(fetched on cibus-wolt run or cibus-wolt balance)" });
-  rows.push({ n: "[5/5]", name: "Purchase", state: "—", detail: "(happens during cibus-wolt run)" });
+  rows.push({ n: "[4/5]", name: "Balance", state: dim("—"), detail: "(fetched on cibus-wolt run or cibus-wolt balance)" });
+  rows.push({ n: "[5/5]", name: "Purchase", state: dim("—"), detail: "(happens during cibus-wolt run)" });
 
   printTable(rows);
 
   const last = await getLastRun();
-  // eslint-disable-next-line no-console
   console.log("");
   if (last) {
-    const parts = [`status=${last.status}`, `amount=${last.amount}`];
-    if (last.reason) parts.push(`reason=${last.reason}`);
-    if (last.url) parts.push(`url=${last.url}`);
-    // eslint-disable-next-line no-console
-    console.log(`Last run: ${last.ts} — ${parts.join(", ")}`);
+    const parts = [`${dim("status=")}${bold(last.status)}`, `${dim("amount=")}${bold(String(last.amount))}`];
+    if (last.reason) parts.push(`${dim("reason=")}${last.reason}`);
+    if (last.url) parts.push(`${dim("url=")}${last.url}`);
+    console.log(`${bold("Last run:")} ${dim(last.ts)} — ${parts.join(", ")}`);
   } else {
-    // eslint-disable-next-line no-console
-    console.log("Last run: (none yet — runs.jsonl empty or missing)");
+    console.log(`${bold("Last run:")} ${dim("(none yet — runs.jsonl empty or missing)")}`);
   }
 
   const schedState = await loadSchedulesState();
-  // eslint-disable-next-line no-console
   console.log("");
-  // eslint-disable-next-line no-console
-  console.log(`Schedules (${schedState.cadence}):`);
+  console.log(`${bold("Schedules")} ${dim(`(${schedState.cadence})`)}:`);
   if (schedState.schedules.length === 0) {
-    // eslint-disable-next-line no-console
-    console.log("  (none — add with: cibus-wolt schedule add)");
+    console.log(`  ${dim(`(none — add with: ${cmd("cibus-wolt schedule add")})`)}`);
   } else {
     const now = new Date();
     for (const s of schedState.schedules) {
-      const next = s.enabled ? nextFireTime(s, schedState.cadence, now).toLocaleString() : "—";
-      // eslint-disable-next-line no-console
-      console.log(`  ${s.id.slice(0, 8)}  ${describeSchedule(s, schedState.cadence)}  next=${next}`);
+      const next = s.enabled ? nextFireTime(s, schedState.cadence, now).toLocaleString() : dim("—");
+      console.log(`  ${dim(s.id.slice(0, 8))}  ${describeSchedule(s, schedState.cadence)}  ${dim("next=")}${next}`);
     }
   }
 
   const missed = await readMissed(5);
   if (missed.length > 0) {
-    // eslint-disable-next-line no-console
     console.log("");
-    // eslint-disable-next-line no-console
-    console.log("Recent missed periods:");
+    console.log(bold("Recent missed periods:"));
     for (const m of missed) {
-      // eslint-disable-next-line no-console
-      console.log(`  ${m.ts}  ${m.scheduleName ?? m.scheduleId.slice(0, 8)}  period=${m.missedPeriodKey}  ${m.reason}`);
+      console.log(`  ${dim(m.ts)}  ${m.scheduleName ?? m.scheduleId.slice(0, 8)}  ${dim(`period=${m.missedPeriodKey}`)}  ${m.reason}`);
     }
   }
 }

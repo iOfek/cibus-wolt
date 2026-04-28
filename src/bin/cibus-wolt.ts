@@ -30,35 +30,44 @@ function parseAmountFlag(args: string[]): number | undefined {
   return undefined;
 }
 
-function showHelp(): void {
-  console.log(
-    [
-      "cibus-wolt — drain leftover Cibus balance into a Wolt gift card on your own account.",
-      "",
-      "Usage: cibus-wolt <command> [args...]",
-      "",
-      "Commands:",
-      "  run [--dry-run] [--amount N]",
-      "                     Run a drain. --amount N spends exactly N ₪ (must be ≤ available).",
-      "  balance            Fetch current Cibus weekly balance.",
-      "  status             Auth + session state for each phase.",
-      "  reset <scope>      Delete cached state. Scope: all | gmail | cibus | wolt | webhook | logs.",
-      "  logs               Print the latest log file.",
-      "  webhook-url        Print the current webhook URL (tunnel + token).",
-      "  rotate-token       Regenerate the webhook token.",
-      "  stable-tunnel      Set up ngrok with a free static domain (stable URL).",
-      "  devtunnel-setup    Set up Azure Dev Tunnels (Microsoft) — alternative when ngrok is blocked.",
-      "  setup              Interactive first-time setup wizard. Re-run to edit values.",
-      "  wolt-login         Open Chrome to log in to Wolt manually (session expired).",
-      "  claude-code-mcp    Install cibus-wolt MCP into Claude Code (~/.claude.json). Requires `cibus-wolt setup` first.",
-      "  claude-desktop-mcp Install cibus-wolt MCP into Claude Desktop (claude_desktop_config.json). Requires `cibus-wolt setup` first.",
-      "  phone-setup        Set up phone access (Custom Connector via tunnel). Requires Claude Code or Desktop installed.",
-      "  schedule <sub>     Manage recurring drain schedules (list|add|edit|remove|enable|disable|cadence).",
-      "  help               Show this help.",
-      "",
-      "State lives at ~/.cibus-wolt/. Configure creds via .env in that directory or the project root.",
-    ].join("\n"),
-  );
+async function showHelp(): Promise<void> {
+  const { bold, cyan, dim, blank, note, val } = await import("../ui.ts");
+  const row = (label: string, desc: string): string =>
+    `  ${bold(label.padEnd(22, " "))} ${dim(desc)}`;
+  const heading = (s: string): string => bold(cyan(s));
+
+  console.log(`${bold(cyan("cibus-wolt"))} ${dim("— drain leftover Cibus balance into a Wolt gift card on your own account.")}`);
+  blank();
+  console.log(`${bold("Usage:")} cibus-wolt ${dim("<command> [args...]")}`);
+  blank();
+  console.log(heading("First-time setup"));
+  console.log(row("setup", "Interactive setup wizard. Re-run to edit values."));
+  console.log(row("wolt-login", "Open Chrome to log in to Wolt manually (session expired)."));
+  blank();
+  console.log(heading("Run drains"));
+  console.log(row("run [--dry-run] [--amount N]", "Drain. --amount N spends exactly N ₪ (≤ available)."));
+  console.log(row("balance", "Fetch current Cibus weekly balance."));
+  console.log(row("status", "Auth + session state for each phase."));
+  console.log(row("logs", "Print the latest log file."));
+  console.log(row("reset <scope>", "Delete cached state. Scope: all | gmail | cibus | wolt | webhook | logs."));
+  blank();
+  console.log(heading("Schedules"));
+  console.log(row("schedule <sub>", "list | add | edit | remove | enable | disable | cadence"));
+  blank();
+  console.log(heading("Tunnel + phone"));
+  console.log(row("stable-tunnel", "Set up ngrok with a free static domain (stable URL)."));
+  console.log(row("devtunnel-setup", "Set up Azure Dev Tunnels — alternative when ngrok is blocked."));
+  console.log(row("webhook-url", "Print the current webhook URL (tunnel + token)."));
+  console.log(row("rotate-token", "Regenerate the webhook token."));
+  console.log(row("phone-setup", "Custom Connector via tunnel for Claude.ai (mobile/web)."));
+  blank();
+  console.log(heading("Claude clients"));
+  console.log(row("claude-code-mcp", "Install MCP into Claude Code (~/.claude.json)."));
+  console.log(row("claude-desktop-mcp", "Install MCP into Claude Desktop."));
+  blank();
+  console.log(row("help", "Show this help."));
+  blank();
+  note(`State lives at ${val("~/.cibus-wolt/")}. Configure creds via .env in that directory or the project root.`);
 }
 
 async function main(): Promise<void> {
@@ -146,11 +155,11 @@ async function main(): Promise<void> {
     case "help":
     case "--help":
     case "-h":
-      showHelp();
+      await showHelp();
       break;
     default:
       console.error(`Unknown command: ${cmd}\n`);
-      showHelp();
+      await showHelp();
       process.exit(1);
   }
 }

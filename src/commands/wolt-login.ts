@@ -1,6 +1,7 @@
 /* eslint-disable no-console */
 import { paths } from "../paths.ts";
 import { logger } from "../logger.ts";
+import { blank, cmd, failure, info, note, success, val } from "../ui.ts";
 
 /**
  * Open a Chrome window for the user to log in to Wolt manually, then exit.
@@ -11,9 +12,9 @@ import { logger } from "../logger.ts";
  * every subsequent drain — `run` refreshes the expiry on each invocation.
  */
 export async function runWoltLoginCommand(): Promise<void> {
-  console.log("Opening Chrome to Wolt's login page. Sign in manually, then come back here.");
-  console.log(`Profile: ${paths.chromeProfile}`);
-  console.log("");
+  info("Opening Chrome to Wolt's login page. Sign in manually, then come back here.");
+  note(`Profile: ${val(paths.chromeProfile)}`);
+  blank();
 
   const { acquireBrowser } = await import("../browser.ts");
   const { ensureWoltLoggedIn } = await import("../woltLogin.ts");
@@ -21,13 +22,13 @@ export async function runWoltLoginCommand(): Promise<void> {
   try {
     const page = browser.context.pages()[0] ?? (await browser.context.newPage());
     await ensureWoltLoggedIn({ page });
-    console.log("");
-    console.log(`  ✓ Wolt session saved to ${paths.chromeProfile}`);
-    console.log("  Subsequent `cibus-wolt run` calls will reuse this session and silently refresh it.");
+    blank();
+    success(`Wolt session saved to ${val(paths.chromeProfile)}`);
+    note(`Subsequent ${cmd("cibus-wolt run")} calls will reuse this session and silently refresh it.`);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     logger.error({ err: msg }, "Wolt login failed");
-    console.log(`  ✗ ${msg}`);
+    failure(msg);
     process.exit(1);
   } finally {
     await browser.close();

@@ -5,6 +5,10 @@ import readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { ensureStateDir, paths } from "../paths.ts";
 import { binaryExists, IS_MAC, IS_WIN, openUrl } from "../platform.ts";
+import {
+  blank, bold, cmd, cyan, defaultSuffix, dim, failure, info, note, section,
+  success, val, warn, yesNoSuffix,
+} from "../ui.ts";
 
 /**
  * `cibus-wolt devtunnel-setup` — sets up Microsoft Azure Dev Tunnels as the
@@ -26,8 +30,7 @@ const PORT = 3737;
 async function ask(prompt: string, defaultValue?: string): Promise<string> {
   const rl = readline.createInterface({ input: stdin, output: stdout });
   try {
-    const suffix = defaultValue !== undefined ? ` [${defaultValue || "(empty)"}]` : "";
-    const ans = (await rl.question(`${prompt}${suffix}: `)).trim();
+    const ans = (await rl.question(`  ${prompt}${defaultSuffix(defaultValue)}: `)).trim();
     return ans || (defaultValue ?? "");
   } finally {
     rl.close();
@@ -35,21 +38,16 @@ async function ask(prompt: string, defaultValue?: string): Promise<string> {
 }
 
 async function askYesNo(prompt: string, defaultYes: boolean): Promise<boolean> {
-  const def = defaultYes ? "Y/n" : "y/N";
-  const ans = (await ask(`${prompt} (${def})`)).toLowerCase();
+  const rl = readline.createInterface({ input: stdin, output: stdout });
+  let raw = "";
+  try {
+    raw = await rl.question(`  ${prompt}${yesNoSuffix(defaultYes)}: `);
+  } finally {
+    rl.close();
+  }
+  const ans = raw.trim().toLowerCase();
   if (ans === "") return defaultYes;
   return ans === "y" || ans === "yes";
-}
-
-function hr(): void {
-  console.log("─".repeat(66));
-}
-
-function title(s: string): void {
-  console.log("");
-  hr();
-  console.log(`  ${s}`);
-  hr();
 }
 
 function tryInstallDevtunnel(): boolean {
@@ -121,51 +119,51 @@ function buildHostname(base: string, cluster: string, port: number): string {
 export async function runDevtunnelSetupCommand(): Promise<void> {
   await ensureStateDir();
 
-  console.log("");
-  console.log("  cibus-wolt — Azure Dev Tunnels setup");
-  console.log("  Microsoft's first-party tunneling product. Stable URL, signed in");
-  console.log("  with your personal Microsoft account. Use this when ngrok is blocked.");
+  blank();
+  console.log(`  ${bold(cyan("cibus-wolt"))} ${dim("— Azure Dev Tunnels setup")}`);
+  note("Microsoft's first-party tunneling product. Stable URL, signed in with your");
+  note("personal Microsoft account. Use this when ngrok is blocked.");
 
   // Step 1: install devtunnel
-  title("1/4  Install devtunnel");
+  section("Install devtunnel", { step: { n: 1, total: 4 } });
   if (binaryExists("devtunnel")) {
-    console.log("  ✓ devtunnel already installed");
+    success("devtunnel already installed");
   } else {
     const hint = installHint();
-    const doInstall = await askYesNo(`devtunnel not found. Run \`${hint}\`?`, true);
+    const doInstall = await askYesNo(`devtunnel not found. Run ${cmd(hint)}?`, true);
     if (!doInstall) {
-      console.log("  Install devtunnel manually, then re-run this command.");
+      note("Install devtunnel manually, then re-run this command.");
       return;
     }
     if (!tryInstallDevtunnel()) {
-      console.log("  Auto-install failed. See https://aka.ms/devtunnels/docs/cli");
+      failure(`Auto-install failed. See ${val("https://aka.ms/devtunnels/docs/cli")}`);
       return;
     }
   }
 
   // Step 2: log in
-  title("2/4  Microsoft account login");
+  section("Microsoft account login", { step: { n: 2, total: 4 } });
   if (isLoggedIn()) {
-    console.log("  ✓ Already logged in to devtunnel");
-    const relogin = await askYesNo("  Switch account?", false);
+    success("Already logged in to devtunnel");
+    const relogin = await askYesNo("Switch account?", false);
     if (relogin) await runDevtunnelLogin();
   } else {
-    console.log("  A browser window will open for Microsoft account sign-in.");
-    console.log("  Use a personal MS account — work tenants often block --allow-anonymous.");
-    console.log("");
+    info("A browser window will open for Microsoft account sign-in.");
+    note("Use a personal MS account — work tenants often block --allow-anonymous.");
+    blank();
     await askYesNo("Continue?", true);
     await runDevtunnelLogin();
     if (!isLoggedIn()) {
-      console.log("  ⚠ Login didn't complete. Re-run this command after signing in.");
+      warn("Login didn't complete. Re-run this command after signing in.");
       return;
     }
   }
 
   // Step 3: create the persistent tunnel + port
-  title(`3/4  Create persistent tunnel "${TUNNEL_NAME}"`);
+  section(`Create persistent tunnel "${TUNNEL_NAME}"`, { step: { n: 3, total: 4 } });
   if (tunnelExists(TUNNEL_NAME)) {
-    console.log(`  ✓ Tunnel "${TUNNEL_NAME}" already exists`);
-    const recreate = await askYesNo("  Recreate it (drops the existing URL)?", false);
+    success(`Tunnel ${val(`"${TUNNEL_NAME}"`)} already exists`);
+    const recreate = await askYesNo("Recreate it (drops the existing URL)?", false);
     if (recreate) {
       try {
         execSync(`devtunnel delete ${TUNNEL_NAME} -f`, { stdio: "ignore" });
@@ -179,32 +177,32 @@ export async function runDevtunnelSetupCommand(): Promise<void> {
   }
 
   // Step 4: read the URL + persist
-  title("4/4  Save tunnel info + install background service");
+  section("Save tunnel info + install background service", { step: { n: 4, total: 4 } });
   const ids = readTunnelFullId(TUNNEL_NAME);
   if (!ids) {
-    console.log("  ⚠ Couldn't parse tunnel ID from `devtunnel show`. Run it manually:");
-    console.log(`     devtunnel show ${TUNNEL_NAME}`);
+    warn(`Couldn't parse tunnel ID from ${cmd("devtunnel show")}. Run it manually:`);
+    info(cmd(`devtunnel show ${TUNNEL_NAME}`));
     return;
   }
   const hostname = buildHostname(ids.base, ids.cluster, PORT);
   await fs.writeFile(paths.tunnelHostname, hostname, { mode: 0o600 });
   await fs.writeFile(paths.tunnelKind, "devtunnel\n", { mode: 0o600 });
   await fs.writeFile(paths.devtunnelId, TUNNEL_NAME, { mode: 0o600 });
-  console.log(`  ✓ Hostname:  ${hostname}`);
-  console.log(`  ✓ Tunnel ID: ${ids.base}.${ids.cluster}`);
-  console.log(`  ✓ Persisted to ${paths.tunnelHostname} + ${paths.tunnelKind}`);
+  success(`Hostname:  ${val(hostname)}`);
+  success(`Tunnel ID: ${val(`${ids.base}.${ids.cluster}`)}`);
+  success(`Persisted to ${val(paths.tunnelHostname)} + ${val(paths.tunnelKind)}`);
 
   const doInstall = await askYesNo("Install/update the background service that hosts the tunnel on login?", true);
   if (!doInstall) {
-    console.log("  Skipped. Run manually:");
-    console.log(`    devtunnel host ${TUNNEL_NAME}`);
+    note("Skipped. Run manually:");
+    info(cmd(`devtunnel host ${TUNNEL_NAME}`));
     return;
   }
   try {
     // install-bg prints the URLs + service status — no need to repeat them here.
     execSync("npm run install-bg", { stdio: "inherit" });
   } catch {
-    console.log("  install-bg failed. Run manually: npm run install-bg");
+    failure(`install-bg failed. Run manually: ${cmd("npm run install-bg")}`);
     return;
   }
 }
@@ -217,9 +215,9 @@ function createTunnel(): boolean {
     execSync(`devtunnel port create ${TUNNEL_NAME} -p ${PORT} --protocol http`, { stdio: "inherit" });
     return true;
   } catch (e) {
-    console.log(`  ⚠ Tunnel creation failed: ${e instanceof Error ? e.message : String(e)}`);
-    console.log("    Common cause: tenant policy blocks `--allow-anonymous` on a work account.");
-    console.log("    Sign in with a personal MS account (Step 2) and re-run.");
+    failure(`Tunnel creation failed: ${e instanceof Error ? e.message : String(e)}`);
+    note(`Common cause: tenant policy blocks ${cmd("--allow-anonymous")} on a work account.`);
+    note("Sign in with a personal MS account (Step 2) and re-run.");
     return false;
   }
 }

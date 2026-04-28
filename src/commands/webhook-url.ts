@@ -2,6 +2,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { paths, ensureStateDir } from "../paths.ts";
+import { blank, bold, cmd, dim, emphasis, failure, val, warn } from "../ui.ts";
 
 async function readToken(): Promise<string | null> {
   try {
@@ -46,28 +47,38 @@ export async function runWebhookUrlCommand(): Promise<void> {
   const found = await readTunnelUrl();
 
   if (!token) {
-    console.error("No webhook token yet — start the server (npm run mcp) at least once.");
+    failure(`No webhook token yet — start the server (${cmd("npm run mcp")}) at least once.`);
     process.exit(1);
   }
   if (!found) {
-    console.error("No tunnel URL found.");
-    console.error("  Set up a stable ngrok tunnel: npx cibus-wolt stable-tunnel");
+    failure("No tunnel URL found.");
+    console.error(`  Set up a stable ngrok tunnel: ${cmd("npx cibus-wolt stable-tunnel")}`);
     process.exit(1);
   }
 
   const base = `${found.url}/webhook/${token}`;
-  console.log(`${found.stable ? "STABLE" : "⚠ QUICK (rotates on reboot)"} tunnel URL:`);
-  console.log(`  ${found.url}\n`);
-  console.log(`Webhook base URL:\n  ${base}\n`);
-  console.log("Endpoints:");
-  console.log(`  POST  ${base}/drain       body: { "dry_run"?: boolean }`);
-  console.log(`  POST  ${base}/otp         body: { "code": "123456" }`);
-  console.log(`  POST  ${base}/magic_link  body: { "url": "https://wolt.com/me/magic_login?..." }`);
-  console.log(`  POST  ${base}/ack`);
-  console.log(`  GET   ${base}/status`);
-  console.log(`  GET   ${base}/url         (current tunnel URL reflection)`);
-  console.log("\nTreat the full URL as a password — anyone with it can call all endpoints.");
+  const status = found.stable ? bold("STABLE") : `${emphasis("⚠ QUICK")} ${dim("(rotates on reboot)")}`;
+  console.log(`${status} ${dim("tunnel URL:")}`);
+  console.log(`  ${val(found.url)}`);
+  blank();
+  console.log(`${bold("Webhook base URL:")}`);
+  console.log(`  ${val(base)}`);
+  blank();
+  console.log(bold("Endpoints:"));
+  const ep = (method: string, p: string, body?: string): void => {
+    const left = `  ${dim(method.padEnd(5, " "))} ${val(`${base}${p}`)}`;
+    console.log(body ? `${left}  ${dim(body)}` : left);
+  };
+  ep("POST", "/drain", `body: { "dry_run"?: boolean }`);
+  ep("POST", "/otp", `body: { "code": "123456" }`);
+  ep("POST", "/magic_link", `body: { "url": "https://wolt.com/me/magic_login?..." }`);
+  ep("POST", "/ack");
+  ep("GET", "/status");
+  ep("GET", "/url", "(current tunnel URL reflection)");
+  blank();
+  warn(`Treat the full URL as a ${emphasis("password")} — anyone with it can call all endpoints.`);
   if (!found.stable) {
-    console.log("\nUpgrade to a stable URL: npx cibus-wolt stable-tunnel");
+    blank();
+    console.log(`Upgrade to a stable URL: ${cmd("npx cibus-wolt stable-tunnel")}`);
   }
 }

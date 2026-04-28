@@ -5,6 +5,10 @@ import readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { ensureStateDir, paths } from "../paths.ts";
 import { binaryExists, ngrokInstallHint, openUrl, tryInstallNgrok } from "../platform.ts";
+import {
+  blank, bold, cmd, cyan, defaultSuffix, dim, failure, info, note, numbered,
+  section, success, val, warn, yesNoSuffix,
+} from "../ui.ts";
 
 /**
  * `cibus-wolt tunnel-setup` — sets up ngrok with a free static domain so your
@@ -18,8 +22,7 @@ import { binaryExists, ngrokInstallHint, openUrl, tryInstallNgrok } from "../pla
 async function ask(prompt: string, defaultValue?: string): Promise<string> {
   const rl = readline.createInterface({ input: stdin, output: stdout });
   try {
-    const suffix = defaultValue !== undefined ? ` [${defaultValue || "(empty)"}]` : "";
-    const ans = (await rl.question(`${prompt}${suffix}: `)).trim();
+    const ans = (await rl.question(`  ${prompt}${defaultSuffix(defaultValue)}: `)).trim();
     return ans || (defaultValue ?? "");
   } finally {
     rl.close();
@@ -27,21 +30,16 @@ async function ask(prompt: string, defaultValue?: string): Promise<string> {
 }
 
 async function askYesNo(prompt: string, defaultYes: boolean): Promise<boolean> {
-  const def = defaultYes ? "Y/n" : "y/N";
-  const ans = (await ask(`${prompt} (${def})`)).toLowerCase();
+  const rl = readline.createInterface({ input: stdin, output: stdout });
+  let raw = "";
+  try {
+    raw = await rl.question(`  ${prompt}${yesNoSuffix(defaultYes)}: `);
+  } finally {
+    rl.close();
+  }
+  const ans = raw.trim().toLowerCase();
   if (ans === "") return defaultYes;
   return ans === "y" || ans === "yes";
-}
-
-function hr(): void {
-  console.log("─".repeat(66));
-}
-
-function title(s: string): void {
-  console.log("");
-  hr();
-  console.log(`  ${s}`);
-  hr();
 }
 
 function ngrokAuthtokenConfigured(): boolean {
@@ -58,56 +56,51 @@ function ngrokAuthtokenConfigured(): boolean {
 export async function runNgrokSetupCommand(): Promise<void> {
   await ensureStateDir();
 
-  console.log("");
-  console.log("  cibus-wolt — ngrok stable-URL setup");
-  console.log("  Gets you a fixed URL like https://<name>.ngrok-free.app that survives");
-  console.log("  reboots. Free: $0 signup, no credit card, no domain purchase.");
+  blank();
+  console.log(`  ${bold(cyan("cibus-wolt"))} ${dim("— ngrok stable-URL setup")}`);
+  note(`Gets you a fixed URL like ${val("https://<name>.ngrok-free.app")} that survives reboots.`);
+  note("Free: $0 signup, no credit card, no domain purchase.");
 
   // Step 1: install ngrok
-  title("1/4  Install ngrok");
+  section("Install ngrok", { step: { n: 1, total: 4 } });
   if (binaryExists("ngrok")) {
-    console.log("  ✓ ngrok already installed");
+    success("ngrok already installed");
   } else {
     const hint = ngrokInstallHint();
-    const doInstall = await askYesNo(`ngrok not found. Run \`${hint}\`?`, true);
+    const doInstall = await askYesNo(`ngrok not found. Run ${cmd(hint)}?`, true);
     if (!doInstall) {
-      console.log("  Install ngrok manually, then re-run this command.");
+      note("Install ngrok manually, then re-run this command.");
       return;
     }
     if (!tryInstallNgrok()) {
-      console.log("  Auto-install failed. Install manually from https://ngrok.com/download");
+      failure(`Auto-install failed. Install manually from ${val("https://ngrok.com/download")}`);
       return;
     }
   }
 
   // Step 2: authtoken
-  title("2/4  Authtoken");
+  section("Authtoken", { step: { n: 2, total: 4 } });
   if (ngrokAuthtokenConfigured()) {
-    console.log("  ✓ ngrok authtoken already configured");
-    const rotate = await askYesNo("  Replace it anyway?", false);
-    if (!rotate) {
-      /* skip */
-    } else {
-      await promptAndStoreToken();
-    }
+    success("ngrok authtoken already configured");
+    const rotate = await askYesNo("Replace it anyway?", false);
+    if (rotate) await promptAndStoreToken();
   } else {
-    console.log("  1. Sign up (free): https://dashboard.ngrok.com/signup");
-    console.log("  2. Copy your authtoken from: https://dashboard.ngrok.com/get-started/your-authtoken");
-    console.log("");
+    numbered(1, `Sign up (free): ${val("https://dashboard.ngrok.com/signup")}`);
+    numbered(2, `Copy your authtoken from: ${val("https://dashboard.ngrok.com/get-started/your-authtoken")}`);
+    blank();
     const openBrowser = await askYesNo("Open the ngrok dashboard now?", true);
     if (openBrowser) openUrl("https://dashboard.ngrok.com/get-started/your-authtoken");
     await promptAndStoreToken();
   }
 
   // Step 3: static domain
-  title("3/4  Reserve a free static domain");
-  console.log("  Free tier includes ONE static domain on *.ngrok-free.app.");
-  console.log("");
-  console.log("  1. Go to: https://dashboard.ngrok.com/domains");
-  console.log("  2. Click 'New Domain' → pick a free subdomain");
-  console.log("     (format: <anything>.ngrok-free.app — letters, digits, hyphens)");
-  console.log("  3. Copy the full domain it shows you.");
-  console.log("");
+  section("Reserve a free static domain", { step: { n: 3, total: 4 } });
+  note(`Free tier includes ${bold("ONE")} static domain on ${val("*.ngrok-free.app")}.`);
+  blank();
+  numbered(1, `Go to: ${val("https://dashboard.ngrok.com/domains")}`);
+  numbered(2, `Click ${bold("'New Domain'")} → pick a free subdomain ${dim("(format: <anything>.ngrok-free.app)")}`);
+  numbered(3, "Copy the full domain it shows you.");
+  blank();
   const openDomains = await askYesNo("Open the Domains page now?", true);
   if (openDomains) openUrl("https://dashboard.ngrok.com/domains");
 
@@ -119,7 +112,7 @@ export async function runNgrokSetupCommand(): Promise<void> {
   }
   const domain = await ask("Your ngrok domain (e.g. cibus-wolt-ofek.ngrok-free.app)", existing);
   if (!domain || !/\.ngrok(?:-free)?\.app$/.test(domain)) {
-    console.log(`  ⚠ Expected something like '<name>.ngrok-free.app'. Got: ${domain || "(empty)"}`);
+    warn(`Expected something like ${val("'<name>.ngrok-free.app'")}. Got: ${val(domain || "(empty)")}`);
     const save = await askYesNo("Save it anyway?", false);
     if (!save) return;
   }
@@ -127,14 +120,14 @@ export async function runNgrokSetupCommand(): Promise<void> {
   await fs.writeFile(paths.tunnelKind, "ngrok\n", { mode: 0o600 });
   // Clean up any leftover devtunnel marker from a previous provider switch.
   await fs.rm(paths.devtunnelId, { force: true });
-  console.log(`  ✓ Saved to ${paths.tunnelHostname}`);
+  success(`Saved to ${val(paths.tunnelHostname)}`);
 
   // Step 4: install/reload background tunnel service
-  title("4/4  Install background tunnel service");
+  section("Install background tunnel service", { step: { n: 4, total: 4 } });
   const doInstall = await askYesNo("Install/update the service that runs ngrok on login?", true);
   if (!doInstall) {
-    console.log("  Skipped. Run manually:");
-    console.log(`    ngrok http --url=${domain} 3737`);
+    note("Skipped. Run manually:");
+    info(cmd(`ngrok http --url=${domain} 3737`));
     return;
   }
 
@@ -142,7 +135,7 @@ export async function runNgrokSetupCommand(): Promise<void> {
     // install-bg prints the URLs + service status — no need to repeat them here.
     execSync("npm run install-bg", { stdio: "inherit" });
   } catch {
-    console.log("  install-bg failed. Run manually: npm run install-bg");
+    failure(`install-bg failed. Run manually: ${cmd("npm run install-bg")}`);
     return;
   }
 }
@@ -150,13 +143,13 @@ export async function runNgrokSetupCommand(): Promise<void> {
 async function promptAndStoreToken(): Promise<void> {
   const token = (await ask("Paste your ngrok authtoken here")).trim();
   if (!token) {
-    console.log("  Empty — skipping.");
+    note("Empty — skipping.");
     return;
   }
   try {
     execSync(`ngrok config add-authtoken ${token}`, { stdio: "ignore" });
-    console.log("  ✓ ngrok authtoken stored in ngrok's config");
+    success("ngrok authtoken stored in ngrok's config");
   } catch (e) {
-    console.log(`  ⚠ Failed to store token: ${e instanceof Error ? e.message : String(e)}`);
+    failure(`Failed to store token: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
