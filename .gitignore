@@ -1,6 +1,10 @@
 node_modules/
 dist/
 
+# Electron build output
+out/
+release/
+
 # Secrets (.env is THE file with credentials; .env.example is safe to commit)
 .env
 .env.local
