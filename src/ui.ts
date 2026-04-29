@@ -152,6 +152,17 @@ export function emphasis(s: string): string {
 }
 
 /**
+ * OSC 8 hyperlink — clickable in modern terminals (iTerm2, Terminal.app, VS Code,
+ * Windows Terminal). In terminals without support, the visible text falls back
+ * gracefully (the escape sequences are stripped or ignored). Default visible
+ * text is the URL itself, so users without OSC 8 still see something selectable.
+ */
+export function link(url: string, text: string = url): string {
+  if (!colorEnabled) return text;
+  return `\x1b]8;;${url}\x07${cyan(underline(text))}\x1b]8;;\x07`;
+}
+
+/**
  * Suffix for `ask()` prompts: shows the default value bolded so a user blindly
  * pressing Enter sees exactly what they're agreeing to. `undefined` → no suffix
  * (the prompt has no default); empty string → "(empty)" hint.

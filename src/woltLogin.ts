@@ -1,9 +1,8 @@
 import type { BrowserContext, Page } from "playwright";
-import type { OAuth2Client } from "google-auth-library";
 import readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import fs from "node:fs/promises";
-import { fetchWoltMagicLink } from "./gmail.ts";
+import { type GmailCreds } from "./gmail.ts";
 import { logger } from "./logger.ts";
 import { paths } from "./paths.ts";
 import { dismissWoltOverlays } from "./woltOverlays.ts";
@@ -11,7 +10,7 @@ import { dismissWoltOverlays } from "./woltOverlays.ts";
 export interface WoltLoginOpts {
   page: Page;
   /** Reserved for the (currently inactive) magic-link helpers. */
-  auth?: OAuth2Client;
+  gmail?: GmailCreds;
   /** Reserved for the (currently inactive) magic-link helpers. */
   fetchMagicLink?: () => Promise<string>;
 }

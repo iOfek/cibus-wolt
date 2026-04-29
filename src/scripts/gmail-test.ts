@@ -1,12 +1,16 @@
 import { config } from "../config.ts";
-import { fetchWoltMagicLink, getAuthClient } from "../gmail.ts";
+import { fetchWoltMagicLink, tryLoadGmailCreds } from "../gmail.ts";
 import { logger } from "../logger.ts";
 
 async function main() {
-  const auth = await getAuthClient(config.google.clientId, config.google.clientSecret);
+  const creds = tryLoadGmailCreds(config.gmail.user, config.gmail.pass);
+  if (!creds) {
+    logger.error("GMAIL_USER and/or GMAIL_APP_PASSWORD not set");
+    process.exit(1);
+  }
   logger.info("👉 Go to wolt.com in your browser, request a magic-link email NOW. I'll poll for 3 minutes.");
   const url = await fetchWoltMagicLink({
-    auth,
+    creds,
     since: new Date(Date.now() - 5 * 60_000),
     expectEmail: process.env.WOLT_EMAIL ?? "",
     timeoutMs: 3 * 60_000,

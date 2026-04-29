@@ -1,10 +1,9 @@
-import type { OAuth2Client } from "google-auth-library";
 import { chromium, type BrowserContext, type Page } from "playwright";
 import fs from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { fetchCibusOtp } from "./gmail.ts";
+import { fetchCibusOtp, type GmailCreds } from "./gmail.ts";
 import { logger } from "./logger.ts";
 import { paths, screenshotDirFor } from "./paths.ts";
 
@@ -15,7 +14,7 @@ export interface CibusCreds {
 }
 
 export interface GetBalanceOpts {
-  auth?: OAuth2Client;
+  gmail?: GmailCreds;
   /**
    * Override to fetch MFA OTP from an external source (e.g. MCP pause/resume).
    * Receives the SMS-trigger click timestamp so the resolver can reject OTPs
@@ -60,7 +59,7 @@ export async function getCibusWeeklyBalance(creds: CibusCreds, opts: GetBalanceO
 
     if (!loggedIn) {
       logger.info("Session expired or not present — logging in");
-      await doLogin(page, creds, shot, opts.auth, opts.fetchOtp);
+      await doLogin(page, creds, shot, opts.gmail, opts.fetchOtp);
     } else {
       logger.info("Session cookie appears valid — skipping login");
     }
@@ -116,7 +115,7 @@ async function doLogin(
   page: Page,
   creds: CibusCreds,
   shot: (name: string) => Promise<void>,
-  auth?: OAuth2Client,
+  gmail?: GmailCreds,
   fetchOtpOverride?: (since: Date) => Promise<string>,
 ): Promise<void> {
   if (!page.url().includes("/login")) {
@@ -189,10 +188,10 @@ async function doLogin(
         logger.warn({ err: e instanceof Error ? e.message : String(e) }, "External OTP fetch failed — trying Gmail/stdin fallback");
       }
     }
-    if (!code && auth) {
+    if (!code && gmail) {
       try {
         code = await fetchCibusOtp({
-          auth,
+          creds: gmail,
           since: otpSubmittedAt,
           timeoutMs: 90_000,
           pollMs: 5_000,

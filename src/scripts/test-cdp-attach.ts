@@ -24,7 +24,7 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs/promises";
 import { config } from "../config.ts";
-import { tryLoadAuthClient, fetchWoltMagicLink } from "../gmail.ts";
+import { tryLoadGmailCreds, fetchWoltMagicLink } from "../gmail.ts";
 import { findChrome } from "../platform.ts";
 import { dismissWoltOverlays } from "../woltOverlays.ts";
 
@@ -55,14 +55,9 @@ async function main() {
     console.error("✗ WOLT_EMAIL must be set in the environment for this diagnostic script.");
     process.exit(1);
   }
-  if (!config.google.clientId || !config.google.clientSecret) {
-    console.error("✗ GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET required to poll Gmail for the magic-link.");
-    process.exit(1);
-  }
-
-  const auth = await tryLoadAuthClient(config.google.clientId, config.google.clientSecret);
-  if (!auth) {
-    console.error("✗ No cached Gmail token. Run setup first to authorize Gmail.");
+  const creds = tryLoadGmailCreds(config.gmail.user, config.gmail.pass);
+  if (!creds) {
+    console.error("✗ GMAIL_USER + GMAIL_APP_PASSWORD required to poll Gmail for the magic-link.");
     process.exit(1);
   }
 
@@ -134,7 +129,7 @@ async function main() {
 
     try {
       const url = await fetchWoltMagicLink({
-        auth,
+        creds,
         since: new Date(sentAt.getTime() - 30_000),
         expectEmail: woltEmail,
         timeoutMs: 60_000,

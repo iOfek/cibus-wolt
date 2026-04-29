@@ -35,12 +35,12 @@ export const config = {
     company: required("CIBUS_COMPANY"),
     authMode: authMode as "password" | "otp",
   },
-  google: {
-    clientId: process.env.GOOGLE_CLIENT_ID ?? "",
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+  gmail: {
+    user: process.env.GMAIL_USER ?? "",
+    pass: process.env.GMAIL_APP_PASSWORD ?? "",
   },
-  /** True if Gmail OAuth is configured; false if the MCP will rely on submit_magic_link/submit_otp. */
-  gmailEnabled: Boolean(process.env.GOOGLE_CLIENT_ID),
+  /** True if Gmail IMAP creds are configured; false if the MCP will rely on submit_magic_link/submit_otp. */
+  gmailEnabled: Boolean(process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD),
   minAmount: num("MIN_AMOUNT", 10),
   maxSpend: num("MAX_SPEND", 1200),
   dryRun: process.env.DRY_RUN === "1",

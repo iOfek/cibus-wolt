@@ -1,7 +1,6 @@
-import type { OAuth2Client } from "google-auth-library";
 import readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { fetchCibusOtp, fetchWoltMagicLink } from "./gmail.ts";
+import { fetchCibusOtp, fetchWoltMagicLink, type GmailCreds } from "./gmail.ts";
 import { logger } from "./logger.ts";
 
 /**
@@ -70,26 +69,26 @@ export function submit(kind: InputKind, value: string): boolean {
 // ────────────────────────────────────────────────────────────────────────────
 
 export interface ResolveOpts {
-  auth?: OAuth2Client;
+  gmail?: GmailCreds;
   expectEmail?: string;
   allowStdin?: boolean;
   since?: Date;
 }
 
-/** Race: webhook/MCP arrival → Gmail poll (if auth provided) → stdin prompt. */
+/** Race: webhook/MCP arrival → Gmail poll (if creds provided) → stdin prompt. */
 export async function resolveOtp(timeoutMs: number, opts: ResolveOpts = {}): Promise<string> {
   return raceProviders("otp", timeoutMs, [
     waitForExternalSubmit("otp"),
-    opts.auth ? pollGmailOtp(opts.auth, opts.since) : null,
+    opts.gmail ? pollGmailOtp(opts.gmail, opts.since) : null,
     opts.allowStdin !== false ? promptStdin("📱 Enter the 6-digit Cibus SMS code: ") : null,
   ]);
 }
 
-/** Race: webhook/MCP arrival → Gmail poll (if auth) → stdin prompt for URL. */
+/** Race: webhook/MCP arrival → Gmail poll (if creds) → stdin prompt for URL. */
 export async function resolveMagicLink(timeoutMs: number, opts: ResolveOpts = {}): Promise<string> {
   return raceProviders("magic_link", timeoutMs, [
     waitForExternalSubmit("magic_link"),
-    opts.auth && opts.expectEmail ? pollGmailMagicLink(opts.auth, opts.expectEmail, opts.since) : null,
+    opts.gmail && opts.expectEmail ? pollGmailMagicLink(opts.gmail, opts.expectEmail, opts.since) : null,
     opts.allowStdin !== false ? promptStdin("🔗 Paste the Wolt magic-link URL (or press Enter after logging in manually — we'll retry): ") : null,
   ]);
 }
@@ -130,17 +129,17 @@ function waitForExternalSubmit(kind: InputKind): Promise<string> {
   });
 }
 
-async function pollGmailOtp(auth: OAuth2Client, since?: Date): Promise<string> {
+async function pollGmailOtp(creds: GmailCreds, since?: Date): Promise<string> {
   // Default `since` is "now" — fail safe if a caller forgets to pass the click
   // timestamp. Old default (5 minutes back) caused us to pick up stale OTPs
   // from prior login attempts. Callers SHOULD pass an explicit `since`.
   const sinceDate = since ?? new Date();
-  return fetchCibusOtp({ auth, since: sinceDate, timeoutMs: 24 * 60 * 60_000, pollMs: 5_000 });
+  return fetchCibusOtp({ creds, since: sinceDate, timeoutMs: 24 * 60 * 60_000, pollMs: 5_000 });
 }
 
-async function pollGmailMagicLink(auth: OAuth2Client, expectEmail: string, since?: Date): Promise<string> {
+async function pollGmailMagicLink(creds: GmailCreds, expectEmail: string, since?: Date): Promise<string> {
   const sinceDate = since ?? new Date();
-  return fetchWoltMagicLink({ auth, since: sinceDate, expectEmail, timeoutMs: 24 * 60 * 60_000, pollMs: 10_000 });
+  return fetchWoltMagicLink({ creds, since: sinceDate, expectEmail, timeoutMs: 24 * 60 * 60_000, pollMs: 10_000 });
 }
 
 async function promptStdin(prompt: string): Promise<string> {

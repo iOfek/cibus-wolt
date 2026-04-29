@@ -2,7 +2,7 @@ import { appendRun } from "../audit.ts";
 import { acquireBrowser } from "../browser.ts";
 import { getCibusWeeklyBalance } from "../cibus.ts";
 import { config } from "../config.ts";
-import { tryLoadAuthClient } from "../gmail.ts";
+import { tryLoadGmailCreds } from "../gmail.ts";
 import { resolveMagicLink, resolveOtp } from "../inputs.ts";
 import { logger } from "../logger.ts";
 import { ensureStateDir, screenshotDirFor } from "../paths.ts";
@@ -61,12 +61,12 @@ export async function runDrainCommand(opts: DrainOpts = {}): Promise<void> {
 
   // Phase 1: Gmail (optional — only used as one of several input providers)
   logPhaseBanner(1, 5, "Gmail (optional)");
-  const auth = config.gmailEnabled
-    ? (await tryLoadAuthClient(config.google.clientId, config.google.clientSecret)) ?? undefined
+  const gmail = config.gmailEnabled
+    ? tryLoadGmailCreds(config.gmail.user, config.gmail.pass) ?? undefined
     : undefined;
-  if (auth) {
-    const g = await checkGmail(auth);
-    logger.info(g.ok ? `✓ ${g.summary}` : `→ Gmail configured but token invalid (${g.reason}); continuing without Gmail`);
+  if (gmail) {
+    const g = await checkGmail(gmail);
+    logger.info(g.ok ? `✓ ${g.summary}` : `→ Gmail configured but creds invalid (${g.reason}); continuing without Gmail`);
   } else {
     logger.info("→ Gmail not configured; relying on webhook/MCP/stdin inputs");
   }
@@ -88,8 +88,8 @@ export async function runDrainCommand(opts: DrainOpts = {}): Promise<void> {
   // Phase 4: Balance
   logPhaseBanner(4, 5, "Balance fetch");
   const balance = await getCibusWeeklyBalance(config.cibus, {
-    auth,
-    fetchOtp: (since) => resolveOtp(5 * 60_000, { auth, allowStdin: true, since }),
+    gmail,
+    fetchOtp: (since) => resolveOtp(5 * 60_000, { gmail, allowStdin: true, since }),
   });
   const maxSpendable = Math.floor(balance);
 
@@ -138,10 +138,10 @@ export async function runDrainCommand(opts: DrainOpts = {}): Promise<void> {
         password: config.cibus.password,
         authMode: config.cibus.authMode,
       },
-      auth,
+      gmail,
       dryRun,
       screenshotDir,
-      fetchOtp: (since) => resolveOtp(5 * 60_000, { auth, allowStdin: true, since }),
+      fetchOtp: (since) => resolveOtp(5 * 60_000, { gmail, allowStdin: true, since }),
     });
     await appendRun({ ts: new Date().toISOString(), amount, status: result.status, url: result.url });
     logger.info(`✓ Run complete: ${result.status}`);

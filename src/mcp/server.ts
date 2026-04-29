@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import { chromium, type BrowserContext } from "playwright";
 import { config } from "../config.ts";
 import { getCibusWeeklyBalance } from "../cibus.ts";
-import { tryLoadAuthClient } from "../gmail.ts";
+import { tryLoadGmailCreds } from "../gmail.ts";
 import { logger } from "../logger.ts";
 import { ensureStateDir, paths, screenshotDirFor } from "../paths.ts";
 import {
@@ -118,13 +118,13 @@ async function runDrainBackground(runId: string, dryRun: boolean, requestedAmoun
   try {
     await ensureStateDir();
     // Gmail is optional — Claude feeds magic-link + OTP via submit_* tools
-    const auth = config.gmailEnabled
-      ? await tryLoadAuthClient(config.google.clientId, config.google.clientSecret)
+    const gmail = config.gmailEnabled
+      ? tryLoadGmailCreds(config.gmail.user, config.gmail.pass)
       : null;
 
     const balance = await getCibusWeeklyBalance(config.cibus, {
-      auth: auth ?? undefined,
-      fetchOtp: (since) => resolveOtp(5 * 60_000, { auth: auth ?? undefined, allowStdin: false, since }),
+      gmail: gmail ?? undefined,
+      fetchOtp: (since) => resolveOtp(5 * 60_000, { gmail: gmail ?? undefined, allowStdin: false, since }),
     });
     const maxSpendable = Math.floor(balance);
 
@@ -170,10 +170,10 @@ async function runDrainBackground(runId: string, dryRun: boolean, requestedAmoun
           password: config.cibus.password,
           authMode: config.cibus.authMode,
         },
-        auth: auth ?? undefined,
+        gmail: gmail ?? undefined,
         dryRun,
         screenshotDir,
-        fetchOtp: (since) => resolveOtp(5 * 60_000, { auth: auth ?? undefined, allowStdin: false, since }),
+        fetchOtp: (since) => resolveOtp(5 * 60_000, { gmail: gmail ?? undefined, allowStdin: false, since }),
       });
       await appendRun({ ts: new Date().toISOString(), amount, status: result.status, url: result.url });
       finishRun(runId, "completed", { status: result.status, amount, url: result.url });
@@ -205,8 +205,8 @@ export function createMcpServer(): McpServer {
       if (!config.gmailEnabled) {
         gmail = { ok: true, summary: "Gmail not configured (MCP mode — Claude's Gmail integration supplies magic-links + OTPs via submit_magic_link / submit_otp)" };
       } else {
-        const auth = await tryLoadAuthClient(config.google.clientId, config.google.clientSecret);
-        gmail = auth ? await checkGmail(auth) : { ok: false, reason: "token.json missing" };
+        const creds = tryLoadGmailCreds(config.gmail.user, config.gmail.pass);
+        gmail = creds ? await checkGmail(creds) : { ok: false, reason: "Gmail creds missing" };
       }
       const cibus = await checkCibusSession();
       const wolt = await checkWoltSession();
@@ -243,10 +243,10 @@ export function createMcpServer(): McpServer {
       inputSchema: {},
     },
     async () => {
-      const auth = await tryLoadAuthClient(config.google.clientId, config.google.clientSecret);
-      if (!auth) return errorResult("Gmail auth missing — run `npm run auth` on the laptop first.");
+      const gmail = tryLoadGmailCreds(config.gmail.user, config.gmail.pass);
+      if (!gmail) return errorResult("Gmail creds missing — run `cibus-wolt setup` to configure GMAIL_USER + GMAIL_APP_PASSWORD.");
       try {
-        const balance = await getCibusWeeklyBalance(config.cibus, { auth });
+        const balance = await getCibusWeeklyBalance(config.cibus, { gmail });
         return textResult({ balance });
       } catch (e) {
         return errorResult(e instanceof Error ? e.message : String(e));

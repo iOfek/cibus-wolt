@@ -1,5 +1,5 @@
 import { config } from "../config.ts";
-import { tryLoadAuthClient } from "../gmail.ts";
+import { tryLoadGmailCreds } from "../gmail.ts";
 import { ensureStateDir } from "../paths.ts";
 import {
   checkCibusSession,
@@ -39,10 +39,10 @@ async function main() {
   await ensureStateDir();
   const rows: Row[] = [];
 
-  const auth = await tryLoadAuthClient(config.google.clientId, config.google.clientSecret);
-  const gmailStatus: PhaseStatus = auth
-    ? await checkGmail(auth)
-    : { ok: false, reason: "token.json missing (run npm start for interactive OAuth)" };
+  const creds = tryLoadGmailCreds(config.gmail.user, config.gmail.pass);
+  const gmailStatus: PhaseStatus = creds
+    ? await checkGmail(creds)
+    : { ok: false, reason: "GMAIL_USER/GMAIL_APP_PASSWORD missing (run cibus-wolt setup)" };
   const g = fmtStatus(gmailStatus);
   rows.push({ n: "[1/5]", name: "Gmail", state: g.state, detail: g.detail });
 

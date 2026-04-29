@@ -1,13 +1,20 @@
-import { google } from "googleapis";
 import { config } from "../config.ts";
-import { getAuthClient } from "../gmail.ts";
+import { tryLoadGmailCreds, verifyGmailCreds } from "../gmail.ts";
 import { logger } from "../logger.ts";
 
 async function main() {
-  const auth = await getAuthClient(config.google.clientId, config.google.clientSecret);
-  const gmail = google.gmail({ version: "v1", auth });
-  const profile = await gmail.users.getProfile({ userId: "me" });
-  logger.info({ email: profile.data.emailAddress, messagesTotal: profile.data.messagesTotal }, "Gmail OAuth OK");
+  const creds = tryLoadGmailCreds(config.gmail.user, config.gmail.pass);
+  if (!creds) {
+    logger.error("GMAIL_USER and/or GMAIL_APP_PASSWORD not set");
+    process.exit(1);
+  }
+  const result = await verifyGmailCreds(creds);
+  if (result.ok) {
+    logger.info({ email: result.email }, "Gmail IMAP login OK");
+  } else {
+    logger.error({ err: result.error }, "Gmail IMAP login failed");
+    process.exit(1);
+  }
 }
 
 main().catch((e) => {

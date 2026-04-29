@@ -1,7 +1,6 @@
-import type { OAuth2Client } from "google-auth-library";
-import { google } from "googleapis";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { verifyGmailCreds, type GmailCreds } from "./gmail.ts";
 import { logger } from "./logger.ts";
 import { paths } from "./paths.ts";
 
@@ -9,7 +8,6 @@ export type PhaseStatus =
   | { ok: true; summary: string }
   | { ok: false; reason: string };
 
-const TOKEN_PATH = paths.token;
 const CIBUS_USER_DATA = paths.chromeProfileCibus;
 const WOLT_USER_DATA = paths.chromeProfile;
 
@@ -17,21 +15,10 @@ export function logPhaseBanner(index: number, total: number, name: string): void
   logger.info(`━━━━━━━━━━ [${index}/${total}] ${name} ━━━━━━━━━━`);
 }
 
-export async function checkGmail(auth: OAuth2Client): Promise<PhaseStatus> {
-  try {
-    await fs.access(TOKEN_PATH);
-  } catch {
-    return { ok: false, reason: "token.json missing (OAuth consent needed)" };
-  }
-  try {
-    const gmail = google.gmail({ version: "v1", auth });
-    const profile = await gmail.users.getProfile({ userId: "me" });
-    const email = profile.data.emailAddress ?? "unknown";
-    return { ok: true, summary: `Authenticated as ${email}` };
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return { ok: false, reason: `Gmail API error: ${msg}` };
-  }
+export async function checkGmail(creds: GmailCreds): Promise<PhaseStatus> {
+  const result = await verifyGmailCreds(creds);
+  if (result.ok) return { ok: true, summary: `Authenticated as ${result.email}` };
+  return { ok: false, reason: `Gmail IMAP error: ${result.error}` };
 }
 
 export async function checkCibusSession(): Promise<PhaseStatus> {

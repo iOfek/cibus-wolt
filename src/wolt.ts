@@ -1,8 +1,7 @@
-import type { OAuth2Client } from "google-auth-library";
 import type { BrowserContext, FrameLocator, Page } from "playwright";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { fetchCibusOtp } from "./gmail.ts";
+import { fetchCibusOtp, type GmailCreds } from "./gmail.ts";
 import { logger } from "./logger.ts";
 import { dismissWoltOverlays } from "./woltOverlays.ts";
 
@@ -12,7 +11,7 @@ export interface BuyGiftCardOpts {
   amount: number;
   cibus: { username: string; password: string; authMode: "password" | "otp" };
   /** Required unless fetchOtp is provided (used for Gmail-polling OTP fetch in OTP mode). */
-  auth?: OAuth2Client;
+  gmail?: GmailCreds;
   dryRun: boolean;
   screenshotDir: string;
   /**
@@ -30,7 +29,7 @@ export interface BuyGiftCardResult {
 }
 
 export async function buyAndRedeemWoltGiftCard(opts: BuyGiftCardOpts): Promise<BuyGiftCardResult> {
-  const { page, amount, cibus, auth, dryRun, screenshotDir, fetchOtp } = opts;
+  const { page, amount, cibus, gmail, dryRun, screenshotDir, fetchOtp } = opts;
   await fs.mkdir(screenshotDir, { recursive: true });
 
   const shot = async (name: string) => {
@@ -78,7 +77,7 @@ export async function buyAndRedeemWoltGiftCard(opts: BuyGiftCardOpts): Promise<B
   await page.waitForTimeout(5000);
   await shot("07-pay-clicked");
 
-  await signInCibusPopup(page, cibus, auth, fetchOtp);
+  await signInCibusPopup(page, cibus, gmail, fetchOtp);
   await shot("08-cibus-signed-in");
 
   if (dryRun) {
@@ -266,7 +265,7 @@ async function signInWithOtp(
   page: Page,
   cibusFrame: FrameLocator,
   username: string,
-  auth: OAuth2Client | undefined,
+  gmail: GmailCreds | undefined,
   fetchOtp?: (since: Date) => Promise<string>,
 ): Promise<void> {
   logger.info("Cibus sign-in: OTP mode");
@@ -314,15 +313,15 @@ async function signInWithOtp(
   let code: string;
   if (fetchOtp) {
     code = await fetchOtp(submittedAt);
-  } else if (auth) {
+  } else if (gmail) {
     code = await fetchCibusOtp({
-      auth,
+      creds: gmail,
       since: submittedAt,
       timeoutMs: 120_000,
       pollMs: 5_000,
     });
   } else {
-    throw new Error("Cibus OTP required but no Gmail auth and no external provider (MCP must pass fetchOtp).");
+    throw new Error("Cibus OTP required but no Gmail creds and no external provider (MCP must pass fetchOtp).");
   }
 
   await otpField.fill(code);
@@ -392,7 +391,7 @@ async function clickFirstEnabledInFrame(frame: FrameLocator, ...selectors: strin
 async function signInCibusPopup(
   page: Page,
   creds: { username: string; password: string; authMode: "password" | "otp" },
-  auth: OAuth2Client | undefined,
+  gmail: GmailCreds | undefined,
   fetchOtp?: (since: Date) => Promise<string>,
 ): Promise<void> {
   logger.info({ authMode: creds.authMode }, "Waiting for Cibus iframe to render (up to 30s)");
@@ -423,7 +422,7 @@ async function signInCibusPopup(
   }
 
   if (creds.authMode === "otp") {
-    await signInWithOtp(page, cibusFrame, creds.username, auth, fetchOtp);
+    await signInWithOtp(page, cibusFrame, creds.username, gmail, fetchOtp);
   } else {
     await signInWithPermanentPassword(page, cibusFrame, creds.username, creds.password);
   }
@@ -434,13 +433,13 @@ async function signInCibusPopup(
   //   b) A second OTP prompt — Cibus wants a fresh SMS code before authorising
   //
   // Race the two; handle OTP if it shows up, then re-wait for the confirm button.
-  await handleMaybeSecondMfa(page, cibusFrame, auth, fetchOtp);
+  await handleMaybeSecondMfa(page, cibusFrame, gmail, fetchOtp);
 }
 
 async function handleMaybeSecondMfa(
   page: Page,
   cibusFrame: FrameLocator,
-  auth: OAuth2Client | undefined,
+  gmail: GmailCreds | undefined,
   fetchOtp: ((since: Date) => Promise<string>) | undefined,
 ): Promise<void> {
   // Floor for OTP freshness: capture before we start watching. Cibus triggers
@@ -473,7 +472,7 @@ async function handleMaybeSecondMfa(
     const { resolveOtp } = await import("./inputs.ts");
     const code = fetchOtp
       ? await fetchOtp(watchStartedAt)
-      : await resolveOtp(5 * 60_000, { auth, allowStdin: true, since: watchStartedAt });
+      : await resolveOtp(5 * 60_000, { gmail, allowStdin: true, since: watchStartedAt });
     await otpField.fill(code);
     await page.waitForTimeout(400);
     // Tick remember checkbox if present (second MFA often shows it too)

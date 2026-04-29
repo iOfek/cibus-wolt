@@ -11,7 +11,7 @@ import { binaryExists, claudeDesktopConfigPath, findChrome, findOnPath, openUrl 
 import { bothServicesInstalled, restartMcpService } from "../services.ts";
 import {
   blank, bold, bullet, choiceSuffix, cmd, cyan, defaultSuffix, dim, done,
-  emphasis, failure, info, kv, note, numbered, plain, pressEnter, rule,
+  emphasis, failure, info, kv, link, note, numbered, plain, pressEnter, rule,
   section, subsection, success, val, warn, yesNoSuffix,
 } from "../ui.ts";
 
@@ -98,6 +98,12 @@ async function askRaw(prompt: string): Promise<string> {
   } finally {
     rl.close();
   }
+}
+
+function isValidEmail(s: string): boolean {
+  // Loose RFC-5322-shaped check: one local part, one @, one domain with a dot.
+  // Workspace addresses (you@yourcompany.com) are valid for Gmail IMAP too.
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 }
 
 // binaryExists / findChrome live in src/platform.ts.
@@ -570,54 +576,61 @@ async function ensureTunnel(): Promise<void> {
 }
 
 async function stepGmail(env: EnvMap): Promise<void> {
-  subsection("Gmail OAuth", "Polls your Gmail for the Cibus OTP email forwarded by your iOS Shortcut.");
+  subsection("Gmail App Password", "Polls your Gmail (via IMAP) for the Cibus OTP email forwarded by your iOS Shortcut.");
   blank();
-  info(`One-time GCP project setup: ${val("https://console.cloud.google.com")}`);
-  numbered(1, "New project → enable Gmail API");
-  numbered(2, "OAuth consent screen → External → add yourself as Test User, scope gmail.readonly");
-  numbered(3, "Credentials → Create OAuth Client ID → Desktop app");
+
+  // Ask for the address first — separating it from the password prompt avoids
+  // users pasting the 16-char password into the email field by mistake.
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    env.GMAIL_USER = (await ask("Gmail address (e.g. you@gmail.com)", env.GMAIL_USER)).trim();
+    if (!env.GMAIL_USER) {
+      warn("Gmail address is required. Re-enter or Ctrl-C to skip.");
+      continue;
+    }
+    if (!isValidEmail(env.GMAIL_USER)) {
+      warn(`That doesn't look like an email address: ${val(env.GMAIL_USER)}`);
+      continue;
+    }
+    break;
+  }
+
+  blank();
+  info(`Generate a 16-character App Password: ${link("https://myaccount.google.com/apppasswords")}`);
+  numbered(1, `Sign in as ${bold(env.GMAIL_USER)}`);
+  numbered(2, `App name: ${bold("cibus-wolt")} (anything works) → Create`);
+  numbered(3, `Copy the 16-char password (spaces are fine, they get stripped)`);
+  blank();
+  note(`Requires 2FA on the account. If the page says "Your account isn't eligible", enable 2-Step Verification first.`);
   blank();
 
   const envPath = path.join(paths.dir, ".env");
-  let authedClient: import("google-auth-library").OAuth2Client | null = null;
-  // Loop until we have credentials that successfully complete the OAuth flow
-  // and read the user's Gmail profile. Wrong client ID/secret or a closed
-  // consent browser would otherwise only surface during a real drain.
+  let verifiedCreds: { user: string; pass: string } | null = null;
+  // Loop until we have creds that successfully complete an IMAP login.
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    env.GOOGLE_CLIENT_ID = await ask("GOOGLE_CLIENT_ID", env.GOOGLE_CLIENT_ID);
-    env.GOOGLE_CLIENT_SECRET = await ask("GOOGLE_CLIENT_SECRET", env.GOOGLE_CLIENT_SECRET);
-    if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
-      warn("Both ID and secret are required for Gmail polling. Re-enter or Ctrl-C to skip.");
+    const rawPass = await ask("App password", env.GMAIL_APP_PASSWORD);
+    env.GMAIL_APP_PASSWORD = rawPass.replace(/\s+/g, "");
+    if (!env.GMAIL_APP_PASSWORD) {
+      warn("App password is required. Re-enter or Ctrl-C to skip.");
       continue;
     }
-    // Persist before triggering the browser — token.json + refresh-token live
-    // separately, but config.ts reads credentials from .env.
     await writeEnvFile(envPath, env);
 
     blank();
-    info(`Verifying OAuth — ${emphasis("a browser tab will open")} for Google consent.`);
-    note("Pick the Gmail account that receives Cibus mail.");
-    try {
-      const { getAuthClient } = await import("../gmail.ts");
-      const { google } = await import("googleapis");
-      const client = await getAuthClient(env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET);
-      const gmail = google.gmail({ version: "v1", auth: client });
-      const profile = await gmail.users.getProfile({ userId: "me" });
-      success(`Gmail OAuth verified — authorized as ${val(profile.data.emailAddress ?? "(unknown)")}`);
-      authedClient = client;
+    info(`Verifying — connecting to imap.gmail.com:993...`);
+    const { verifyGmailCreds } = await import("../gmail.ts");
+    const result = await verifyGmailCreds({ user: env.GMAIL_USER, pass: env.GMAIL_APP_PASSWORD });
+    if (result.ok) {
+      success(`Gmail IMAP verified — authorized as ${val(result.email)}`);
+      verifiedCreds = { user: env.GMAIL_USER, pass: env.GMAIL_APP_PASSWORD };
       break;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      failure(`Gmail OAuth failed: ${msg}`);
-      // Wipe any stale cached token so the retry forces a fresh consent flow
-      // rather than re-trying a broken refresh token.
-      await fs.rm(paths.token, { force: true });
-      const retry = await askYesNo("Re-enter credentials and retry?", true);
-      if (!retry) {
-        note("Skipping Gmail verification. The next drain will retry the consent flow.");
-        return;
-      }
+    }
+    failure(`Gmail IMAP login failed: ${result.error}`);
+    const retry = await askYesNo("Re-enter app password and retry?", true);
+    if (!retry) {
+      note("Skipping Gmail verification. The next drain will retry.");
+      return;
     }
   }
 
@@ -628,17 +641,17 @@ async function stepGmail(env: EnvMap): Promise<void> {
   note(`README → section ${bold("'iOS Shortcut — forward Cibus SMS to Gmail'")}.`);
   note("Without it: you'll be prompted in the terminal for the 6-digit code.");
 
-  if (authedClient) await testOtpShortcutGmail(env, authedClient);
+  if (verifiedCreds) await testOtpShortcutGmail(env, verifiedCreds);
 }
 
-async function testOtpShortcutGmail(env: EnvMap, auth: import("google-auth-library").OAuth2Client): Promise<void> {
+async function testOtpShortcutGmail(env: EnvMap, creds: { user: string; pass: string }): Promise<void> {
   blank();
   const doTest = await askYesNo("Test the SMS→Gmail Shortcut end-to-end now? (we trigger the SMS for you)", true);
   if (!doTest) return;
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const ok = await withSilencedLogger(() => runGmailOtpTest(env, auth));
+    const ok = await withSilencedLogger(() => runGmailOtpTest(env, creds));
     if (ok) return;
     const retry = await askYesNo("Retry the test? (fix the Shortcut, then come back)", true);
     if (!retry) {
@@ -648,7 +661,7 @@ async function testOtpShortcutGmail(env: EnvMap, auth: import("google-auth-libra
   }
 }
 
-async function runGmailOtpTest(env: EnvMap, auth: import("google-auth-library").OAuth2Client): Promise<boolean> {
+async function runGmailOtpTest(env: EnvMap, creds: { user: string; pass: string }): Promise<boolean> {
   blank();
   warn(`Make sure the SMS→Gmail Automation is saved and ${emphasis("'Run After Confirmation' is OFF")}`);
   note("— otherwise iOS will silently swallow it.");
@@ -656,7 +669,7 @@ async function runGmailOtpTest(env: EnvMap, auth: import("google-auth-library").
 
   const fetchOtp = async (since: Date): Promise<string> => {
     const { fetchCibusOtp } = await import("../gmail.ts");
-    return await fetchCibusOtp({ auth, since, timeoutMs: 90_000, pollMs: 5_000 });
+    return await fetchCibusOtp({ creds, since, timeoutMs: 90_000, pollMs: 5_000 });
   };
 
   const result = await triggerCibusSmsAndSaveProfile(env, fetchOtp);
@@ -670,7 +683,8 @@ async function runGmailOtpTest(env: EnvMap, auth: import("google-auth-library").
   bullet(`iOS Shortcut not enabled, or ${bold("'Run After Confirmation'")} still on`);
   bullet("Shortcut filter doesn't match the actual SMS sender / wording");
   bullet(`Email subject in the Shortcut isn't exactly ${bold("'cibus-otp'")}`);
-  bullet("Shortcut sends to a different Gmail than the one you authorized");
+  bullet(`Shortcut sends to a different Gmail than ${bold(creds.user)}`);
+  bullet(`Chrome crashed mid-test — quit ${bold("all")} Chrome windows before retrying (running Chrome can starve the test browser of RAM/GPU)`);
   return false;
 }
 
@@ -846,7 +860,7 @@ async function detectExisting(env: EnvMap): Promise<{
     claudeDesktopConfigured,
     claudeWebConfigured,
     webhookConfigured: hasWebhookToken && hasTunnelHostname,
-    gmailConfigured: Boolean(env.GOOGLE_CLIENT_ID),
+    gmailConfigured: Boolean(env.GMAIL_USER && env.GMAIL_APP_PASSWORD),
   };
 }
 
@@ -869,16 +883,14 @@ async function stepOtpDelivery(env: EnvMap): Promise<void> {
   note("Pick how the Cibus OTP gets to the laptop:");
   bullet(`${bold("gmail")}     — iOS Shortcut forwards the OTP to Gmail; we poll Gmail. ${dim("[~2 min, recommended]")}`);
   bullet(`${bold("webhook")}   — iOS Shortcut POSTs the OTP to us via ngrok/devtunnel. ${dim("[~3 min]")}`);
-  bullet(`${bold("terminal")}  — type the 6 digits when prompted. ${dim("Zero setup, but manual every time.")}`);
   blank();
   const otp = await askChoice(
     "How should we deliver the Cibus OTP?",
-    ["gmail", "webhook", "terminal"],
-    existing.gmailConfigured ? "gmail" : existing.webhookConfigured ? "webhook" : "terminal",
+    ["gmail", "webhook"],
+    existing.webhookConfigured && !existing.gmailConfigured ? "webhook" : "gmail",
   );
   if (otp === "gmail") await stepGmail(env);
-  else if (otp === "webhook") await stepWebhook(env);
-  else note("Skipping — you'll be prompted in the terminal during drains.");
+  else await stepWebhook(env);
 }
 
 async function stepPhoneAccess(env: EnvMap): Promise<void> {

@@ -34,19 +34,18 @@ You can skip any of 4–6. Re-run `setup` anytime — it remembers your previous
 
 ## OTP delivery — pick one
 
-When Cibus forces a re-auth (occasionally, especially the first time), it texts a 6-digit code to your phone. The tool needs that code on the laptop. Three ways to get it there:
+When Cibus forces a re-auth (occasionally, especially the first time), it texts a 6-digit code to your phone. The tool needs that code on the laptop. Two ways to get it there:
 
 
 | Option       | What you do                                                                    | Best for                                                               |
 | ------------ | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
-| **Terminal** | Type the code when prompted                                                    | Running drains by hand, at the laptop. Zero setup.                     |
-| **Gmail**    | iOS Shortcut forwards the SMS to your Gmail; the tool polls Gmail and reads it | Unattended runs (e.g. scheduled). One-time GCP project setup.          |
+| **Gmail**    | iOS Shortcut forwards the SMS to your Gmail; the tool polls Gmail and reads it | Unattended runs (e.g. scheduled). One-time Gmail App Password (~30s).  |
 | **Webhook**  | iOS Shortcut POSTs the SMS to the tool via ngrok or devtunnel                  | Triggering drains from your phone too. One-time tunnel + ngrok signup. |
 
 
-The wizard asks which one and walks you through the chosen path's setup.
+The wizard asks which one and walks you through the chosen path's setup. Both options need an iOS Shortcut — see [iOS Shortcut setup](#ios-shortcut-setup) below.
 
-**Both Gmail and Webhook options need an iOS Shortcut.** See [iOS Shortcut setup](#ios-shortcut-setup) below.
+If neither is configured (or both fail), the drain falls back to a terminal prompt for the 6 digits — only useful when you're at the laptop.
 
 ## Claude integration (optional)
 
@@ -56,7 +55,7 @@ If you'd rather drive drains from a Claude chat ("drain my balance", "what's my 
 - **Claude Desktop** — added to `claude_desktop_config.json`. After Desktop restarts, Claude can call the tool.
 - **Claude.ai mobile / web** ("phone access") — needs a tunnel (ngrok or devtunnel). The wizard prints a paste-ready URL for [claude.ai/customize/connectors](https://claude.ai/customize/connectors). Custom Connectors registered there also sync to Claude Desktop via your account.
 
-If you set up Gmail OAuth in the OTP delivery step, the tool's Gmail poller handles OTPs in the background and Claude doesn't need its own Gmail integration. Otherwise Claude will ask you to type the OTP in chat each time Cibus re-auths (or you can enable Claude Desktop's built-in Gmail connector for unattended reads).
+If you set up the Gmail App Password in the OTP delivery step, the tool's Gmail poller handles OTPs in the background and Claude doesn't need its own Gmail integration. Otherwise Claude will ask you to type the OTP in chat each time Cibus re-auths (or you can enable Claude Desktop's built-in Gmail connector for unattended reads).
 
 ## Daily use
 
@@ -165,7 +164,7 @@ So if you drain weekly or monthly, the session never realistically expires. Skip
 
 The tool has a single internal "input bus" for OTPs. Multiple delivery options can be active simultaneously — first to respond wins. Examples:
 
-- Gmail OAuth + terminal prompt: tool polls Gmail; if you happen to be at the laptop, you can also just type the code.
+- Gmail App Password + terminal prompt: tool polls Gmail via IMAP; if you happen to be at the laptop, you can also just type the code.
 - Webhook + Claude Desktop's Gmail connector: phone-side Shortcut posts to webhook; Claude reads Gmail. Whichever lands first.
 
 You don't pick "instead of" — the wizard's question is just about which paths to actually configure.

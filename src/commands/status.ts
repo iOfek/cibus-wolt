@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 import { config } from "../config.ts";
-import { tryLoadAuthClient } from "../gmail.ts";
+import { tryLoadGmailCreds } from "../gmail.ts";
 import { ensureStateDir } from "../paths.ts";
 import {
   checkCibusSession,
@@ -50,10 +50,10 @@ export async function runStatusCommand(): Promise<void> {
   if (!config.gmailEnabled) {
     gmailStatus = { ok: true, summary: "Not configured (optional — Gmail only needed for fully-unattended scheduled runs)" };
   } else {
-    const auth = await tryLoadAuthClient(config.google.clientId, config.google.clientSecret);
-    gmailStatus = auth
-      ? await checkGmail(auth)
-      : { ok: false, reason: "token.json missing (run cibus-wolt setup or cibus-wolt run to do OAuth)" };
+    const creds = tryLoadGmailCreds(config.gmail.user, config.gmail.pass);
+    gmailStatus = creds
+      ? await checkGmail(creds)
+      : { ok: false, reason: "GMAIL_USER/GMAIL_APP_PASSWORD missing (run cibus-wolt setup)" };
   }
   const g = fmt(gmailStatus);
   rows.push({ n: "[1/5]", name: "Gmail", state: g.state, detail: g.detail });

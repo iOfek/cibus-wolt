@@ -37,8 +37,8 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "dotenv": "^16.4.5",
     "express": "^5.2.1",
-    "google-auth-library": "^9.15.0",
-    "googleapis": "^144.0.0",
+    "imapflow": "^1.0.183",
+    "mailparser": "^3.7.2",
     "pino": "^9.5.0",
     "pino-pretty": "^13.0.0",
     "playwright": "^1.49.0",
@@ -47,6 +47,7 @@
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
+    "@types/mailparser": "^3.4.5",
     "@types/node": "^22.10.0",
     "typescript": "^5.7.0"
   }
