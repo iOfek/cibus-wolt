@@ -586,12 +586,15 @@ async function stepGmail(env: EnvMap): Promise<void> {
   }
 
   blank();
-  info(`Generate a 16-character App Password: ${link("https://myaccount.google.com/apppasswords")}`);
+  const appPasswordUrl = "https://myaccount.google.com/apppasswords";
+  info(`Generate a 16-character App Password: ${link(appPasswordUrl)}`);
   numbered(1, `Sign in as ${bold(env.GMAIL_USER)}`);
   numbered(2, `App name: ${bold("cibus-wolt")} (anything works) → Create`);
   numbered(3, `Copy the 16-char password (spaces are fine, they get stripped)`);
   blank();
   note(`Requires 2FA on the account. If the page says "Your account isn't eligible", enable 2-Step Verification first.`);
+  blank();
+  if (await askYesNo("Open the App Password page in your browser now?", true)) openUrl(appPasswordUrl);
   blank();
 
   const envPath = path.join(paths.dir, ".env");
@@ -627,7 +630,7 @@ async function stepGmail(env: EnvMap): Promise<void> {
   blank();
   warn("Cibus OTPs arrive as SMS — Gmail polling can't see them directly.");
   blank();
-  plain(`For unattended runs, set up an iOS Shortcut that forwards the SMS to Gmail with subject ${bold("cibus-otp")}.`);
+  plain(`For unattended runs, set up an iOS Shortcut that forwards the SMS to Gmail with subject ${bold("Cibus-otp")} / ${bold("cibus-otp")} (case-insensitive).`);
   const shortcutGuideUrl = "https://github.com/iOfek/cibus-wolt#ios-shortcut-setup";
   plain(`Setup guide (with video): ${link(shortcutGuideUrl)}`);
   note("Skip it and you'll be prompted in the terminal for the code each run.");
@@ -690,7 +693,7 @@ async function runGmailOtpTest(env: EnvMap, creds: { user: string; pass: string 
   note("Likely causes:");
   bullet(`iOS Shortcut not enabled, or ${bold("'Run After Confirmation'")} still on`);
   bullet("Shortcut filter doesn't match the actual SMS sender / wording");
-  bullet(`Email subject in the Shortcut isn't exactly ${bold("'cibus-otp'")}`);
+  bullet(`Email subject in the Shortcut isn't ${bold("'Cibus-otp'")} / ${bold("'cibus-otp'")} (case-insensitive)`);
   bullet(`Shortcut sends to a different Gmail than ${bold(creds.user)}`);
   bullet(`Chrome crashed mid-test — quit ${bold("all")} Chrome windows before retrying (running Chrome can starve the test browser of RAM/GPU)`);
   return false;

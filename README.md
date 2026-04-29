@@ -9,8 +9,8 @@ Cibus (Pluxee) gives Israeli tech employees a weekly meal benefit that vanishes 
 ## Quick start
 
 ```sh
-git clone <this repo>
-cd cibus
+git clone https://github.com/iOfek/cibus-wolt
+cd cibus-wolt
 npm install
 npx playwright install chromium
 npx cibus-wolt setup       # interactive, ~5 minutes
@@ -82,7 +82,7 @@ Both **Gmail** and **Webhook** OTP options need a Shortcut that forwards Cibus S
 
 **Action — Gmail option:**
 
-- **Send Email** to your own Gmail. Subject: `cibus-otp`. Body: `<Message>` (the magic variable for the SMS text).
+- **Send Email** to your own Gmail. Subject: `Cibus-otp` / `cibus-otp` (case-insensitive). Body: `<Message>` (the magic variable for the SMS text).
 
 https://github.com/user-attachments/assets/2101f9d0-8767-42cb-a30d-7169dcec7544
 

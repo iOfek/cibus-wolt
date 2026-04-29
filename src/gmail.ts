@@ -193,6 +193,7 @@ export async function fetchCibusOtp(opts: FetchCibusOtpOpts): Promise<string> {
     client = await connect(creds);
     while (Date.now() < deadline) {
       try {
+        // IMAP SUBJECT search is case-insensitive (RFC 3501) — "Cibus-OTP" / "CIBUS-OTP" also match.
         const msgs = await searchAndFetch(client, { since, subject: "cibus-otp" });
         const candidates: Array<{ uid: number; internalDate: number; code: string }> = [];
         for (const m of msgs) {
