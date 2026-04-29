@@ -88,30 +88,14 @@ async function resetScope(scope: "all" | "gmail" | "cibus" | "wolt"): Promise<st
 }
 
 async function launchDrainContext(): Promise<BrowserContext> {
-  const args = [
-    "--disable-blink-features=AutomationControlled",
-    "--disable-features=IsolateOrigins,site-per-process",
-  ];
-  const viewport = { width: 1400, height: 900 };
-  const locale = "en-US";
-  try {
-    return await chromium.launchPersistentContext(USER_DATA_DIR, {
-      headless: false,
-      channel: "chrome",
-      viewport,
-      locale,
-      args,
-      acceptDownloads: false,
-    });
-  } catch {
-    return chromium.launchPersistentContext(USER_DATA_DIR, {
-      headless: false,
-      viewport,
-      locale,
-      args,
-      acceptDownloads: false,
-    });
-  }
+  return chromium.launchPersistentContext(USER_DATA_DIR, {
+    headless: false,
+    channel: "chrome",
+    viewport: { width: 1400, height: 900 },
+    locale: "en-US",
+    args: ["--disable-blink-features=AutomationControlled", "--disable-features=IsolateOrigins,site-per-process"],
+    acceptDownloads: false,
+  });
 }
 
 async function runDrainBackground(runId: string, dryRun: boolean, requestedAmount?: number): Promise<void> {

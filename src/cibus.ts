@@ -37,6 +37,7 @@ export async function getCibusWeeklyBalance(creds: CibusCreds, opts: GetBalanceO
   logger.info("Launching Playwright (persistent profile)");
   const ctx = await chromium.launchPersistentContext(USER_DATA_DIR, {
     headless: false,
+    channel: "chrome",
     viewport: { width: 1280, height: 900 },
     locale: "he-IL",
     args: ["--disable-blink-features=AutomationControlled"],
@@ -394,6 +395,7 @@ export async function triggerCibusSmsAndCompleteLogin(
   try {
     ctx = await chromium.launchPersistentContext(paths.chromeProfileCibus, {
       headless: false,
+      channel: "chrome",
       viewport: { width: 1280, height: 900 },
       locale: "he-IL",
       args: ["--disable-blink-features=AutomationControlled"],

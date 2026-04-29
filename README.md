@@ -6,13 +6,19 @@ Cibus (Pluxee) gives Israeli tech employees a weekly meal benefit that vanishes 
 
 > Personal use, at your own risk. Cibus and Wolt's terms probably don't allow automation.
 
+## Prerequisites
+
+- **Node.js 24+**
+- **Google Chrome** — required, not Chromium. Wolt's bot detection blocks bundled/headless Chromium.
+
+The wizard handles everything else (ngrok/devtunnel, MCP install, etc.).
+
 ## Quick start
 
 ```sh
 git clone https://github.com/iOfek/cibus-wolt
 cd cibus-wolt
 npm install
-npx playwright install chromium
 npx cibus-wolt setup       # interactive, ~5 minutes
 npx cibus-wolt run         # actually drain (Chrome opens so you can watch)
 ```

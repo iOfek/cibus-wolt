@@ -17,9 +17,8 @@ import { findChrome } from "./platform.ts";
  * with stock args and attaching after Chrome is fully booted slips past it.
  * Diagnostic that proved this: src/scripts/test-cdp-attach.ts.
  *
- * Falls back to Playwright's bundled Chromium via launchPersistentContext only
- * if Google Chrome isn't installed — that fallback won't bypass bot detection,
- * but at least keeps the script runnable for unrelated debugging.
+ * Google Chrome is required — there is no bundled-Chromium fallback because
+ * Wolt's bot detection trips on it anyway.
  */
 export interface AcquiredBrowser {
   context: BrowserContext;
@@ -113,25 +112,7 @@ export async function acquireBrowser(opts: BrowserOpts = {}): Promise<AcquiredBr
     return { context, close };
   }
 
-  logger.warn(
-    "⚠ Google Chrome not found. Falling back to Playwright's bundled Chromium (Wolt bot detection will likely fire).",
+  throw new Error(
+    "Google Chrome not found. Install it from https://www.google.com/chrome/ — this tool requires real Chrome (Wolt's bot detection blocks bundled Chromium).",
   );
-  const args = [
-    "--disable-blink-features=AutomationControlled",
-    "--disable-features=IsolateOrigins,site-per-process",
-    "--no-first-run",
-    "--no-default-browser-check",
-  ];
-  const context = await chromium.launchPersistentContext(userDataDir, {
-    headless: false,
-    viewport: { width: 1400, height: 900 },
-    locale: "en-US",
-    args,
-    acceptDownloads: false,
-    ignoreDefaultArgs: ["--enable-automation"],
-  });
-  await context.addInitScript(() => {
-    Object.defineProperty(navigator, "webdriver", { get: () => undefined });
-  });
-  return { context, close: () => context.close().catch(() => {}) };
 }

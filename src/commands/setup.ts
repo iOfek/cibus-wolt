@@ -353,13 +353,11 @@ async function waitForTunnelUrl(token: string): Promise<string | null> {
 async function stepChromeCheck(): Promise<void> {
   section("Chrome", {
     step: { n: 2, total: TOTAL_STEPS },
-    subtitle: "Real Google Chrome — Wolt's bot detection is stricter on Chromium.",
+    subtitle: "Real Google Chrome is required — Wolt's bot detection blocks bundled Chromium.",
   });
   const chromeBin = findChrome();
   if (!chromeBin) {
-    warn("Google Chrome not found. Install from https://www.google.com/chrome/");
-    note("Playwright will fall back to bundled Chromium, which trips Wolt bot detection more easily.");
-    return;
+    throw new Error("Google Chrome not found. Install from https://www.google.com/chrome/ and re-run setup.");
   }
   success(`Found Chrome at ${val(chromeBin)}`);
   note("Each drain launches Chrome with a dedicated profile at");
