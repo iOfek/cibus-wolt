@@ -215,21 +215,6 @@ async function setupClaudeDesktop(env: EnvMap): Promise<void> {
   blank();
   note(`Target file: ${val(configPath)}`);
   note("Safe — merges into existing mcpServers; backs up to .bak first.");
-  const autoEdit = await askYesNo("Automatically add cibus-wolt to Claude Desktop config?", true);
-
-  if (!autoEdit) {
-    blank();
-    note("Paste this into the file manually:");
-    console.log(
-      JSON.stringify({ mcpServers: { "cibus-wolt": entry } }, null, 2)
-        .split("\n")
-        .map((l) => "    " + l)
-        .join("\n"),
-    );
-    blank();
-    note("Then quit + reopen Claude Desktop.");
-    return;
-  }
 
   try {
     await fs.mkdir(path.dirname(configPath), { recursive: true });
@@ -251,7 +236,16 @@ async function setupClaudeDesktop(env: EnvMap): Promise<void> {
     printDesktopGmailHint();
   } catch (e) {
     failure(`Failed to update config: ${e instanceof Error ? e.message : String(e)}`);
-    note("Fall back to manual edit using the JSON printed above.");
+    blank();
+    note("Paste this into the file manually:");
+    console.log(
+      JSON.stringify({ mcpServers: { "cibus-wolt": entry } }, null, 2)
+        .split("\n")
+        .map((l) => "    " + l)
+        .join("\n"),
+    );
+    blank();
+    note("Then quit + reopen Claude Desktop.");
   }
 }
 
