@@ -125,11 +125,7 @@ async function stepCredentials(env: EnvMap): Promise<void> {
   env.CIBUS_USER = await ask("Cibus username / email / phone", env.CIBUS_USER);
   env.CIBUS_PASS = await ask("Cibus permanent password", env.CIBUS_PASS);
   env.CIBUS_COMPANY = await ask("Company (as shown in Cibus, usually lowercase)", env.CIBUS_COMPANY || "microsoft");
-  env.CIBUS_AUTH_MODE = await askChoice(
-    "Cibus auth mode in the Wolt-embedded popup",
-    ["password", "otp"],
-    (env.CIBUS_AUTH_MODE as "password" | "otp") || "password",
-  );
+  env.CIBUS_AUTH_MODE = "password";
   env.MIN_AMOUNT = await ask("Minimum balance to bother draining (₪)", env.MIN_AMOUNT || "10");
   env.MAX_SPEND = await ask("Max single-run spend (₪, sanity cap)", env.MAX_SPEND || "1200");
 }
@@ -630,12 +626,30 @@ async function stepGmail(env: EnvMap): Promise<void> {
 
   blank();
   warn("Cibus OTPs arrive as SMS — Gmail polling can't see them directly.");
-  note(`To get fully unattended runs, set up the iOS Shortcut that forwards the`);
-  note(`Cibus OTP SMS to Gmail with subject ${bold("'cibus-otp'")}.`);
-  note(`README → section ${bold("'iOS Shortcut — forward Cibus SMS to Gmail'")}.`);
-  note("Without it: you'll be prompted in the terminal for the 6-digit code.");
+  blank();
+  plain(`For unattended runs, set up an iOS Shortcut that forwards the SMS to Gmail with subject ${bold("cibus-otp")}.`);
+  const shortcutGuideUrl = "https://github.com/iOfek/cibus-wolt#ios-shortcut-setup";
+  plain(`Setup guide (with video): ${link(shortcutGuideUrl)}`);
+  note("Skip it and you'll be prompted in the terminal for the code each run.");
+  blank();
+  // openUrl() shells out to the OS handler (open / Start-Process / xdg-open),
+  // so it works the same in zsh, PowerShell, Cursor's terminal, etc. The OSC 8
+  // link above is the click-to-open shortcut for terminals that support it.
+  if (await askYesNo("Open the guide in your browser now?", true)) openUrl(shortcutGuideUrl);
+  await confirmShortcutSetup();
 
   if (verifiedCreds) await testOtpShortcutGmail(env, verifiedCreds);
+}
+
+async function confirmShortcutSetup(): Promise<void> {
+  // No default on purpose — typing the word forces engagement with the step
+  // above; a Y/N or Enter-to-continue is too easy to mash past.
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const ans = (await askRaw(`Type ${bold("shortcut")} once the Shortcut is set up`)).toLowerCase();
+    if (ans === "shortcut") return;
+    warn(`Please type ${bold("shortcut")} to continue.`);
+  }
 }
 
 async function testOtpShortcutGmail(env: EnvMap, creds: { user: string; pass: string }): Promise<void> {
