@@ -14,6 +14,8 @@ import {
   emphasis, failure, info, kv, link, note, numbered, plain, pressEnter, rule,
   section, subsection, success, val, warn, yesNoSuffix,
 } from "../ui.ts";
+import type { DrainTarget } from "../drainPrefs.ts";
+import type { RestaurantRecord } from "../pluxeePickup.ts";
 
 /**
  * Interactive setup. Four entry points, each owning a slice of the wizard:
@@ -26,7 +28,7 @@ import {
  * type a new value to change; type `-` to clear. Re-runnable.
  */
 
-const TOTAL_STEPS = 9;
+const TOTAL_STEPS = 10;
 
 interface EnvMap {
   [key: string]: string;
@@ -132,7 +134,7 @@ async function stepCredentials(env: EnvMap): Promise<void> {
 
 async function stepClaudeCode(): Promise<void> {
   section("Claude Code MCP (optional)", {
-    step: { n: 7, total: TOTAL_STEPS },
+    step: { n: 8, total: TOTAL_STEPS },
     subtitle: "Drive drains from any Claude Code session via MCP.",
   });
   note("Claude Code has no built-in Gmail — Cibus OTPs will use whatever delivery");
@@ -697,9 +699,125 @@ async function runGmailOtpTest(env: EnvMap, creds: { user: string; pass: string 
   return false;
 }
 
+async function stepDrainTarget(): Promise<DrainTarget> {
+  const { loadDrainPrefs, saveDrainPrefs, describePrefs } = await import("../drainPrefs.ts");
+  const { fuzzySearch, loadRestaurantsDb } = await import("../pluxeePickup.ts");
+  const { autocompletePrompt } = await import("../autocompletePrompt.ts");
+
+  section("Drain target", {
+    step: { n: 4, total: TOTAL_STEPS },
+    subtitle: "Where each drain spends the balance: vouchers, a Wolt gift card, or both.",
+  });
+
+  const existing = await loadDrainPrefs();
+  if (existing.target !== "wolt" || existing.coupons.length > 0) {
+    note("Existing prefs:");
+    plain(describePrefs(existing));
+    blank();
+    const keep = await askYesNo("Keep existing prefs?", true);
+    if (keep) return existing.target;
+  }
+
+  plain(`- ${bold("coupons")}: buy vouchers at one or more restaurants in order of preference`);
+  plain(`- ${bold("wolt")}:    buy a Wolt gift card (full drain)`);
+  plain(`- ${bold("both")}:    coupons first, leftover → Wolt gift card`);
+  blank();
+  const target = (await askChoice("Target", ["coupons", "wolt", "both"], existing.target)) as DrainTarget;
+
+  if (target === "wolt") {
+    await saveDrainPrefs({ target, coupons: [] });
+    success("Saved: Wolt gift card (full drain).");
+    return target;
+  }
+
+  blank();
+  note("Now pick the restaurants in order of preference. The first place is consumed first.");
+  note("For each place, set a fixed ₪ amount or press Enter for 'drain remaining at this place'.");
+  note("Press Esc when finished — or pick a place to continue.");
+  blank();
+
+  const db = await loadRestaurantsDb();
+  // Initial examples: top-rated places with enough reviews to be meaningful,
+  // shown when the search query is empty so the user sees what's there.
+  const examples = [...db.restaurants]
+    .filter((r) => r.rating != null && r.ratingCount >= 50 && !r.closed)
+    .sort((a, b) => (b.ratingCount ?? 0) - (a.ratingCount ?? 0))
+    .slice(0, 8);
+
+  const picks: import("../drainPrefs.ts").CouponPick[] = [];
+
+  const formatRow = (r: RestaurantRecord, _selected: boolean): string => {
+    const rating = r.rating != null ? `★${r.rating} (${r.ratingCount})` : "—";
+    // Segment order matches Hebrew RTL reading: name on the right (read first),
+    // address middle, rating on the left. Full-brightness everywhere so the
+    // row is readable; subtle hierarchy via color: rating in cyan accent,
+    // address in default fg, name bold.
+    return `${cyan(rating)} · ${r.address} · ${bold(r.name)}`;
+  };
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const remaining = db.restaurants.filter((r) => !picks.some((p) => p.restaurantId === r.id));
+    const remainingExamples = examples.filter((r) => !picks.some((p) => p.restaurantId === r.id));
+    const queryNum = picks.length + 1;
+    let chosen: RestaurantRecord | null;
+    try {
+      chosen = await autocompletePrompt<RestaurantRecord>({
+        prompt: `Search place #${queryNum} ${dim("(type to filter, ↑↓ navigate, Enter pick, Esc done)")}`,
+        initial: remainingExamples,
+        search: (q) => {
+          const dbView: typeof db = { ...db, restaurants: remaining, count: remaining.length };
+          return fuzzySearch(q, dbView, 8).map((m) => m.record);
+        },
+        format: formatRow,
+        hint: undefined,
+        maxRows: 8,
+      });
+    } catch {
+      // aborted via Ctrl-C
+      throw new Error("Setup aborted");
+    }
+    if (!chosen) break;
+    if (picks.some((p) => p.restaurantId === chosen!.id)) {
+      warn(`${chosen.name} is already in the list. Pick another.`);
+      continue;
+    }
+
+    const amtRaw = await askRaw(`Amount at ${chosen.name} in ₪ (Enter = drain remaining)`);
+    let amount: number | undefined;
+    if (amtRaw !== "") {
+      const n = Number(amtRaw);
+      if (!Number.isFinite(n) || n <= 0 || !Number.isInteger(n)) {
+        warn(`Amount must be a positive integer (or Enter for drain). Skipping this place.`);
+        continue;
+      }
+      amount = n;
+    }
+    picks.push({
+      restaurantId: chosen.id,
+      restaurantName: chosen.name,
+      restaurantAddress: chosen.address,
+      amount,
+    });
+    success(`Added: ${chosen.name} → ${amount === undefined ? "drain remaining" : `₪${amount}`}`);
+  }
+
+  if (picks.length === 0 && (target === "coupons" || target === "both")) {
+    warn("No restaurants picked. Falling back to Wolt-only target.");
+    await saveDrainPrefs({ target: "wolt", coupons: [] });
+    return "wolt";
+  }
+
+  await saveDrainPrefs({ target, coupons: picks });
+  blank();
+  success("Saved drain prefs:");
+  plain(describePrefs({ target, coupons: picks }));
+  return target;
+}
+
 async function stepWoltLogin(env: EnvMap): Promise<void> {
   section("Wolt login", {
-    step: { n: 4, total: TOTAL_STEPS },
+    step: { n: 5, total: TOTAL_STEPS },
     subtitle: "One-time manual sign-in. Cookie saved to the profile + auto-refreshed each drain.",
   });
   note("Wolt's bot detection rejects automated email submission, so we hand the browser to you.");
@@ -746,7 +864,7 @@ async function runWoltLoginTest(env: EnvMap): Promise<boolean> {
 
 async function stepSmokeTest(): Promise<void> {
   section("Smoke test", {
-    step: { n: 6, total: TOTAL_STEPS },
+    step: { n: 7, total: TOTAL_STEPS },
     subtitle: "Verify the full pipeline before scheduling unattended runs.",
   });
   const run = await askYesNo(`Run ${cmd("cibus-wolt status")} to verify everything?`, true);
@@ -806,7 +924,12 @@ export async function runSetupCommand(): Promise<void> {
 
   await writeEnvFile(envPath, env);
 
-  await stepWoltLogin(env);
+  const target = await stepDrainTarget();
+  if (target !== "coupons") {
+    await stepWoltLogin(env);
+  } else {
+    note("Target is 'coupons' — skipping Wolt login.");
+  }
   await stepSchedules();
   await stepSmokeTest();
 
@@ -825,7 +948,7 @@ export async function runSetupCommand(): Promise<void> {
 
 async function stepSchedules(): Promise<void> {
   section("Drain schedules (optional)", {
-    step: { n: 5, total: TOTAL_STEPS },
+    step: { n: 6, total: TOTAL_STEPS },
     subtitle: "Recurring drains that fire automatically while the background service runs.",
   });
   note("Pick a cadence matching your Cibus reset, add one or more schedules.");
@@ -904,7 +1027,7 @@ async function stepOtpDelivery(env: EnvMap): Promise<void> {
 
 async function stepPhoneAccess(env: EnvMap): Promise<void> {
   section("Phone access (Claude.ai mobile / web)", {
-    step: { n: 9, total: TOTAL_STEPS },
+    step: { n: 10, total: TOTAL_STEPS },
     subtitle: "HTTP tunnel + Custom Connector so Claude.ai can drive drains over the internet.",
   });
   note("Custom Connectors sync to Claude Desktop too via your Claude account —");
@@ -940,7 +1063,7 @@ export async function runClaudeCodeMcpCommand(): Promise<void> {
 
 async function stepClaudeDesktop(env: EnvMap): Promise<void> {
   section("Claude Desktop MCP (optional)", {
-    step: { n: 8, total: TOTAL_STEPS },
+    step: { n: 9, total: TOTAL_STEPS },
     subtitle: "Independent from Claude Code — separate config file.",
   });
 

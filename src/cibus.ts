@@ -28,7 +28,23 @@ const HOME_URL = "https://consumers.pluxee.co.il/";
 const BALANCE_API_HINT = "prx_user_info";
 const BALANCE_TIMEOUT_MS = 5 * 60 * 1000;
 
-export async function getCibusWeeklyBalance(creds: CibusCreds, opts: GetBalanceOpts = {}): Promise<number> {
+export interface CibusSessionContext {
+  page: Page;
+  /** Resolves once the prx_user_info response has been parsed. */
+  balance: Promise<number>;
+  shot: (name: string) => Promise<void>;
+}
+
+/**
+ * Open a logged-in Cibus session, run `task` against it, then tear down. The
+ * task receives the page and a deferred balance promise; awaiting `balance`
+ * inside the task is fine — the response listener is wired before navigation.
+ */
+export async function withCibusSession<T>(
+  creds: CibusCreds,
+  opts: GetBalanceOpts,
+  task: (ctx: CibusSessionContext) => Promise<T>,
+): Promise<T> {
   const USER_DATA_DIR = paths.chromeProfileCibus;
   await fs.mkdir(USER_DATA_DIR, { recursive: true });
   const screenshotDir = screenshotDirFor("cibus");
@@ -48,7 +64,7 @@ export async function getCibusWeeklyBalance(creds: CibusCreds, opts: GetBalanceO
     await page.screenshot({ path: path.join(screenshotDir, `${name}.png`), fullPage: true }).catch(() => {});
   };
 
-  const balancePromise = captureBalance(page);
+  const balance = captureBalance(page);
 
   try {
     logger.info({ url: HOME_URL }, "Navigating to Pluxee home");
@@ -65,18 +81,25 @@ export async function getCibusWeeklyBalance(creds: CibusCreds, opts: GetBalanceO
       logger.info("Session cookie appears valid — skipping login");
     }
 
-    const balance = await balancePromise;
-    logger.info({ balance }, "Cibus weekly balance fetched");
+    const result = await task({ page, balance, shot });
     await shot("99-success");
-    return balance;
+    return result;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    logger.error({ err: msg, screenshotDir }, "Cibus scrape failed — see screenshots");
+    logger.error({ err: msg, screenshotDir }, "Cibus session failed — see screenshots");
     await shot("99-failure");
     throw e;
   } finally {
     await ctx.close();
   }
+}
+
+export async function getCibusWeeklyBalance(creds: CibusCreds, opts: GetBalanceOpts = {}): Promise<number> {
+  return withCibusSession(creds, opts, async ({ balance }) => {
+    const n = await balance;
+    logger.info({ balance: n }, "Cibus weekly balance fetched");
+    return n;
+  });
 }
 
 function captureBalance(page: Page): Promise<number> {

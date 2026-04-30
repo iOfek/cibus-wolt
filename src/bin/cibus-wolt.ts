@@ -30,6 +30,32 @@ function parseAmountFlag(args: string[]): number | undefined {
   return undefined;
 }
 
+function parseStringFlag(args: string[], flag: string): string | undefined {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === flag && i + 1 < args.length) return args[i + 1];
+    if (a.startsWith(`${flag}=`)) return a.slice(flag.length + 1);
+  }
+  return undefined;
+}
+
+function collectQuery(args: string[]): string {
+  const skip = new Set<number>();
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === "--amount" || a === "--id") {
+      skip.add(i);
+      skip.add(i + 1);
+    } else if (a.startsWith("--amount=") || a.startsWith("--id=") || a.startsWith("--")) {
+      skip.add(i);
+    }
+  }
+  return args
+    .filter((_, i) => !skip.has(i))
+    .join(" ")
+    .trim();
+}
+
 async function showHelp(): Promise<void> {
   const { bold, cyan, dim, blank, note, val } = await import("../ui.ts");
   const row = (label: string, desc: string): string =>
@@ -45,7 +71,8 @@ async function showHelp(): Promise<void> {
   console.log(row("wolt-login", "Open Chrome to log in to Wolt manually (session expired)."));
   blank();
   console.log(heading("Run drains"));
-  console.log(row("run [--dry-run] [--amount N]", "Drain. --amount N spends exactly N ₪ (≤ available)."));
+  console.log(row("run [--dry-run] [--amount N]", "Drain into Wolt gift card. --amount N spends ≤ N ₪."));
+  console.log(row("pickup <query> [opts]", "Buy max-fit vouchers at any Cibus restaurant. Opts: --amount N, --id <restId>, -y, --no-checkout."));
   console.log(row("balance", "Fetch current Cibus weekly balance."));
   console.log(row("status", "Auth + session state for each phase."));
   console.log(row("logs", "Print the latest log file."));
@@ -85,6 +112,17 @@ async function main(): Promise<void> {
     case "balance": {
       const { runBalanceCommand } = await import("../commands/balance.ts");
       await runBalanceCommand();
+      break;
+    }
+    case "pickup": {
+      const { runPickupCommand } = await import("../commands/pickup.ts");
+      const query = collectQuery(args);
+      const id = parseStringFlag(args, "--id");
+      if (!query && !id) throw new Error("Usage: cibus-wolt pickup <query> [--amount N] [--id <restId>] [-y] [--no-checkout]");
+      const amount = parseAmountFlag(args);
+      const yes = args.includes("-y") || args.includes("--yes");
+      const noCheckout = args.includes("--no-checkout");
+      await runPickupCommand({ query, id, amount, yes, noCheckout });
       break;
     }
     case "status": {

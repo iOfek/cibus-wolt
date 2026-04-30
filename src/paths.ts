@@ -30,6 +30,7 @@ export const paths = {
   devtunnelId: path.join(STATE_DIR, "devtunnel-id"),
   schedules: path.join(STATE_DIR, "schedules.json"),
   missed: path.join(STATE_DIR, "missed.jsonl"),
+  drainPrefs: path.join(STATE_DIR, "drain-prefs.json"),
 };
 
 interface MigrationStep {

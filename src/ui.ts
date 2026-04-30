@@ -189,8 +189,8 @@ export function yesNoSuffix(defaultYes: boolean): string {
  * principle.
  */
 export function choiceSuffix(options: string[], defaultOption: string): string {
-  const parts = options.map((o) => (o === defaultOption ? bold(cyan(`[${o}]`)) : dim(o)));
-  return ` (${parts.join(dim(" / "))})`;
+  const parts = options.map((o) => (o === defaultOption ? bold(cyan(`[${o}]`)) : o));
+  return ` (${parts.join(" / ")})`;
 }
 
 /** Styled inner-prompt for soft terminal pauses; pair with askRaw(). */

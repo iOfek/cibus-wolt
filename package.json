@@ -15,6 +15,7 @@
   "files": [
     "src/**/*.ts",
     "src/**/*.sh",
+    "src/**/*.json",
     "README.md",
     "LICENSE"
   ],
