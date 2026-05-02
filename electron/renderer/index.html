@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+    />
+    <title>Cibus Drain</title>
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <aside class="sidebar">
+      <div class="sidebar-title">Cibus Drain</div>
+      <nav class="nav">
+        <button class="nav-btn" data-screen="drain">Drain</button>
+        <button class="nav-btn" data-screen="credentials">Credentials</button>
+        <button class="nav-btn" data-screen="schedules">Schedules</button>
+        <button class="nav-btn" data-screen="mcp">MCP</button>
+      </nav>
+    </aside>
+
+    <main class="content">
+      <!-- ─── DRAIN ─────────────────────────────────────────────────────── -->
+      <section class="screen" data-screen="drain">
+        <h2 class="screen-title">Drain</h2>
+
+        <section class="card">
+          <div class="card-row">
+            <div>
+              <div class="label">Weekly balance</div>
+              <div class="value" id="balance-value">—</div>
+            </div>
+            <button id="refresh-btn">Refresh</button>
+          </div>
+          <div class="status" id="balance-status"></div>
+        </section>
+
+        <section class="card">
+          <div class="card-row">
+            <div>
+              <div class="label">Drain</div>
+              <div class="hint">Spends the full balance into a Wolt gift card.</div>
+            </div>
+            <button id="drain-btn" class="primary">Drain now</button>
+          </div>
+          <div class="status" id="drain-status"></div>
+        </section>
+
+        <section class="card">
+          <div class="label">Recent runs</div>
+          <ul id="history" class="history">
+            <li class="muted">No runs yet.</li>
+          </ul>
+        </section>
+      </section>
+
+      <!-- ─── CREDENTIALS ────────────────────────────────────────────────── -->
+      <section class="screen" data-screen="credentials">
+        <h2 class="screen-title">Credentials</h2>
+        <p class="hint">
+          Or
+          <a href="#" id="rerun-wizard" class="link">re-run the setup wizard</a>.
+        </p>
+
+        <form id="creds-form" class="card form" autocomplete="off">
+          <input type="hidden" name="CIBUS_AUTH_MODE" value="password" />
+
+          <fieldset>
+            <legend>Cibus</legend>
+            <label>
+              <span>Username, email, or phone</span>
+              <input name="CIBUS_USER" required />
+            </label>
+            <label>
+              <span>Permanent password</span>
+              <input name="CIBUS_PASS" type="password" required />
+            </label>
+            <label>
+              <span>Company (as shown in Cibus)</span>
+              <input name="CIBUS_COMPANY" placeholder="microsoft" required />
+            </label>
+          </fieldset>
+
+          <fieldset>
+            <legend>Gmail (for SMS OTP relay)</legend>
+            <p class="hint">
+              An iOS Shortcut forwards Cibus SMS codes to Gmail; we poll IMAP
+              for them. Both fields needed for unattended drains.
+            </p>
+            <label>
+              <span>Gmail address</span>
+              <input name="GMAIL_USER" type="email" placeholder="you@gmail.com" />
+            </label>
+            <label>
+              <span>Gmail App Password (16 chars)</span>
+              <input name="GMAIL_APP_PASSWORD" type="password" />
+            </label>
+          </fieldset>
+
+          <fieldset>
+            <legend>Limits</legend>
+            <label>
+              <span>Min balance to bother draining (₪)</span>
+              <input name="MIN_AMOUNT" type="number" min="1" placeholder="10" />
+            </label>
+            <label>
+              <span>Max single-run spend (₪)</span>
+              <input name="MAX_SPEND" type="number" min="1" placeholder="1200" />
+            </label>
+          </fieldset>
+
+          <div class="form-actions">
+            <button type="submit" class="primary">Save</button>
+            <span class="status" id="creds-status"></span>
+          </div>
+        </form>
+      </section>
+
+      <!-- ─── SCHEDULES ────────────────────────────────────────────────── -->
+      <section class="screen" data-screen="schedules">
+        <h2 class="screen-title">Schedules</h2>
+        <p class="hint">
+          Recurring drains fire automatically while the app is running.
+          Quitting from the tray stops the scheduler.
+        </p>
+
+        <section class="card">
+          <div class="card-row">
+            <div>
+              <div class="label">Cadence</div>
+              <div class="hint">
+                All schedules share one cadence. Switching may invalidate
+                day-of-week / day-of-month fields on existing entries.
+              </div>
+            </div>
+            <select id="cadence-select">
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+              <option value="daily">Daily</option>
+            </select>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-row">
+            <div class="label">Schedules</div>
+            <button id="add-schedule-btn">+ Add schedule</button>
+          </div>
+
+          <form id="add-schedule-form" class="form" hidden autocomplete="off">
+            <fieldset>
+              <legend>New schedule</legend>
+              <label>
+                <span>Name (optional)</span>
+                <input name="name" placeholder="weekly Sunday" />
+              </label>
+              <div id="cadence-fields"><!-- rendered per cadence --></div>
+              <label>
+                <span>Time (HH:MM, 24h)</span>
+                <input name="time" placeholder="09:30" required />
+              </label>
+              <label>
+                <span>Amount (₪) — leave blank for full balance</span>
+                <input name="amount" type="number" min="1" />
+              </label>
+            </fieldset>
+            <div class="form-actions">
+              <button type="submit" class="primary">Add</button>
+              <button type="button" id="add-schedule-cancel">Cancel</button>
+              <span class="status" id="add-schedule-status"></span>
+            </div>
+          </form>
+
+          <ul id="schedules-list" class="schedules">
+            <li class="muted">No schedules yet.</li>
+          </ul>
+        </section>
+      </section>
+
+      <!-- ─── MCP ──────────────────────────────────────────────────────── -->
+      <section class="screen" data-screen="mcp">
+        <h2 class="screen-title">MCP</h2>
+        <p class="hint">
+          Local-only MCP server — exposes drain tools to Claude clients
+          on this machine. Listens on
+          <code>127.0.0.1:<span id="mcp-port">3737</span></code>.
+        </p>
+
+        <section class="card">
+          <div class="card-row">
+            <div>
+              <div class="label">Server</div>
+              <div class="value mcp-state" id="mcp-state-value">stopped</div>
+            </div>
+            <button id="mcp-toggle" class="primary">Start</button>
+          </div>
+          <div class="status" id="mcp-status"></div>
+        </section>
+
+        <section class="card mcp-config" id="mcp-config" hidden>
+          <div class="label">URL</div>
+          <div class="mcp-row">
+            <code class="mcp-mono" id="mcp-url">—</code>
+            <button id="mcp-copy-url">Copy</button>
+          </div>
+
+          <div class="label" style="margin-top: 0.75rem">Bearer token</div>
+          <div class="mcp-row">
+            <code class="mcp-mono" id="mcp-token">—</code>
+            <button id="mcp-copy-token">Copy</button>
+            <button id="mcp-rotate" class="danger">Rotate</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="label">Recent activity</div>
+          <div class="hint" id="mcp-activity">No active run.</div>
+        </section>
+
+        <!-- Tunnel section — exposes the local MCP server to Claude.ai -->
+        <section class="card" id="tunnel-card">
+          <div class="card-row">
+            <div>
+              <div class="label">Public tunnel</div>
+              <div class="hint">
+                Exposes the local MCP server so Claude.ai web/mobile can
+                reach it. Uses ngrok with a free static domain.
+              </div>
+            </div>
+            <div class="value mcp-state" id="tunnel-state-value">stopped</div>
+          </div>
+          <div class="status" id="tunnel-status"></div>
+
+          <!-- One of these blocks is shown at a time, driven by tunnel state -->
+          <div id="tunnel-block-loading" class="tunnel-block">
+            <p class="muted">Checking ngrok…</p>
+          </div>
+
+          <div id="tunnel-block-not-installed" class="tunnel-block" hidden>
+            <p>ngrok is not installed.</p>
+            <p class="hint">macOS: <code>brew install ngrok</code></p>
+            <p class="hint">
+              Or download from
+              <a href="#" id="open-ngrok-download" class="link"
+                >ngrok.com/download</a
+              >.
+            </p>
+            <button id="tunnel-recheck">Re-check</button>
+          </div>
+
+          <div id="tunnel-block-not-auth" class="tunnel-block" hidden>
+            <p>ngrok is installed but no authtoken is configured.</p>
+            <ol class="hint">
+              <li>
+                Sign in / sign up:
+                <a href="#" id="open-ngrok-signup" class="link"
+                  >dashboard.ngrok.com</a
+                >
+              </li>
+              <li>
+                Copy your authtoken from
+                <a href="#" id="open-ngrok-authtoken" class="link"
+                  >dashboard.ngrok.com/get-started/your-authtoken</a
+                >
+              </li>
+              <li>Paste it below.</li>
+            </ol>
+            <form id="tunnel-auth-form" class="form" autocomplete="off">
+              <label>
+                <span>ngrok authtoken</span>
+                <input name="authtoken" type="password" required />
+              </label>
+              <div class="form-actions">
+                <button type="submit" class="primary">Save authtoken</button>
+              </div>
+            </form>
+          </div>
+
+          <div id="tunnel-block-no-domain" class="tunnel-block" hidden>
+            <p>Reserve a free static domain on ngrok, then paste it here.</p>
+            <ol class="hint">
+              <li>
+                Open
+                <a href="#" id="open-ngrok-domains" class="link"
+                  >dashboard.ngrok.com/domains</a
+                >
+              </li>
+              <li>Click <strong>New Domain</strong> → pick any free name.</li>
+              <li>
+                Copy the domain (e.g.
+                <code>your-app.ngrok-free.app</code>).
+              </li>
+            </ol>
+            <form id="tunnel-domain-form" class="form" autocomplete="off">
+              <label>
+                <span>Reserved domain</span>
+                <input
+                  name="domain"
+                  placeholder="your-app.ngrok-free.app"
+                  required
+                />
+              </label>
+              <div class="form-actions">
+                <button type="submit" class="primary">Save domain</button>
+              </div>
+            </form>
+          </div>
+
+          <div id="tunnel-block-ready" class="tunnel-block" hidden>
+            <div class="label">Domain</div>
+            <div class="mcp-row">
+              <code class="mcp-mono" id="tunnel-domain">—</code>
+              <button id="tunnel-edit-domain">Change</button>
+              <button id="tunnel-toggle" class="primary">Start tunnel</button>
+            </div>
+            <p class="hint">
+              Manage on
+              <a href="#" id="open-ngrok-domains-ready" class="link"
+                >dashboard.ngrok.com/domains</a
+              >.
+            </p>
+
+            <div id="tunnel-running-block" hidden>
+              <div class="label" style="margin-top: 0.75rem">Public URL</div>
+              <div class="mcp-row">
+                <code class="mcp-mono" id="tunnel-public-url">—</code>
+                <button id="tunnel-copy-url">Copy</button>
+                <button id="tunnel-open-claude" class="primary">
+                  Open Claude.ai connectors
+                </button>
+              </div>
+              <p class="hint">
+                In Claude.ai → Custom Connectors → <strong>Add</strong> →
+                paste the URL above. Leave OAuth fields blank. The local MCP
+                server must be running too.
+              </p>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <!-- ─── WIZARD (not in sidebar — accessed via first-run or re-run link) ── -->
+      <section class="screen wizard-screen" data-screen="wizard">
+        <div class="wizard">
+          <header class="wizard-header">
+            <div class="wizard-progress">
+              Step <span id="wizard-step-num">1</span> of
+              <span id="wizard-step-total">6</span>
+            </div>
+            <h2 class="wizard-title" id="wizard-title">Welcome</h2>
+          </header>
+
+          <div class="wizard-body" id="wizard-body">
+            <!-- per-step content rendered by JS -->
+          </div>
+
+          <footer class="wizard-footer">
+            <button id="wizard-back" hidden>Back</button>
+            <span class="wizard-spacer"></span>
+            <button id="wizard-skip" hidden>Skip</button>
+            <button id="wizard-next" class="primary">Next</button>
+          </footer>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

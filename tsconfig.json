@@ -16,5 +16,5 @@
     "noEmit": true,
     "lib": ["ES2023", "DOM"]
   },
-  "include": ["src/**/*"]
+  "include": ["src/**/*", "electron/**/*", "electron.vite.config.ts"]
 }
