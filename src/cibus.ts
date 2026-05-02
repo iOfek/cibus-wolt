@@ -156,16 +156,29 @@ async function doLogin(
   await ensureRememberMe(page);
   await shot("02-username");
 
-  // Step 1 continue
-  await clickEnabled(
-    page,
-    [
-      'button.cib-btn:has-text("שנמשיך")',
-      'button:has-text("שנמשיך")',
-    ],
-    "step-1",
-  );
-  await page.waitForTimeout(2000);
+  // Step 1 — the legacy 2-step UI hid the password until you clicked "שנמשיך";
+  // the current single-page UI shows username + password + company together.
+  // Detect by probing for the password field; only click "שנמשיך" if it's still
+  // hidden. Clicking the wrong "שנמשיך" on the new UI navigates away and
+  // closes the persistent context mid-flight.
+  const passwordVisibleEarly = await page
+    .locator("input#password")
+    .first()
+    .isVisible({ timeout: 500 })
+    .catch(() => false);
+  if (!passwordVisibleEarly) {
+    await clickEnabled(
+      page,
+      [
+        'button.cib-btn:has-text("שנמשיך")',
+        'button:has-text("שנמשיך")',
+      ],
+      "step-1",
+    );
+    await page.waitForTimeout(2000);
+  } else {
+    logger.info("Single-page login form detected — skipping step-1 advance");
+  }
   await shot("03-after-step1");
 
   // Password + company
@@ -182,13 +195,16 @@ async function doLogin(
   await ensureRememberMe(page);
   await shot("04-password");
 
-  // Step 2 login — triggers SMS if MFA is required
+  // Step 2 login — triggers SMS if MFA is required. Selector list covers both
+  // the legacy "כניסה" submit and Cibus's relabeled "שנמשיך" / "כניסה לאתר".
   const otpSubmittedAt = new Date();
   await clickEnabled(
     page,
     [
       'button.cib-btn:has-text("כניסה")',
       'button:has-text("כניסה")',
+      'button.cib-btn:has-text("שנמשיך")',
+      'button:has-text("שנמשיך")',
     ],
     "step-2",
   );
