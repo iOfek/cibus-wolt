@@ -4,9 +4,16 @@ import fs from "node:fs/promises";
 import { config } from "../config.ts";
 import { getCibusWeeklyBalance } from "../cibus.ts";
 import { runDrainInBackground } from "../commands/run.ts";
+import {
+  describePrefs,
+  loadDrainPrefs,
+  saveDrainPrefs,
+  type DrainPrefs,
+} from "../drainPrefs.ts";
 import { tryLoadGmailCreds } from "../gmail.ts";
 import { logger } from "../logger.ts";
 import { paths } from "../paths.ts";
+import { fuzzySearch, loadRestaurantsDb } from "../pluxeePickup.ts";
 import {
   checkCibusSession,
   checkGmail,
@@ -210,6 +217,100 @@ export function createMcpServer(): McpServer {
       const r = getRunById(run_id);
       if (!r) return errorResult("Unknown run_id (it may have completed + been replaced, or never existed).");
       return textResult(r);
+    },
+  );
+
+  server.registerTool(
+    "drain_prefs_get",
+    {
+      description:
+        "Get the current drain preferences (target + ordered coupon places). target ∈ {coupons, wolt, both}; coupons is the ordered list of places to spend at, each with optional fixed ₪ amount (undefined = drain remaining at that place).",
+      inputSchema: {},
+    },
+    async () => {
+      const prefs = await loadDrainPrefs();
+      return textResult({ ...prefs, summary: describePrefs(prefs) });
+    },
+  );
+
+  server.registerTool(
+    "drain_prefs_set",
+    {
+      description:
+        "Replace drain preferences. target=wolt clears any coupons. target=coupons|both keeps the ordered list — each entry needs a restaurant_id (use search_restaurants to find one) and an optional ₪ amount (omit for 'drain remaining at this place'). Validates that all IDs exist in the restaurants DB.",
+      inputSchema: {
+        target: z.enum(["coupons", "wolt", "both"]),
+        coupons: z
+          .array(
+            z.object({
+              restaurant_id: z.string().describe("Restaurant id from search_restaurants"),
+              amount: z
+                .number()
+                .int()
+                .positive()
+                .optional()
+                .describe("Fixed ₪ to spend here; omit for 'drain remaining at this place'"),
+            }),
+          )
+          .optional(),
+      },
+    },
+    async ({ target, coupons }) => {
+      const requested = coupons ?? [];
+      if (target === "wolt" && requested.length > 0) {
+        return errorResult("target=wolt does not accept coupons. Use target=coupons or target=both.");
+      }
+      const db = await loadRestaurantsDb();
+      const resolved: DrainPrefs["coupons"] = [];
+      for (const pick of requested) {
+        const rec = db.restaurants.find((r) => r.id === pick.restaurant_id);
+        if (!rec) {
+          return errorResult(`Unknown restaurant_id: ${pick.restaurant_id}. Use search_restaurants to find a valid id.`);
+        }
+        resolved.push({
+          restaurantId: rec.id,
+          restaurantName: rec.name,
+          restaurantAddress: rec.address,
+          amount: pick.amount,
+        });
+      }
+      if ((target === "coupons" || target === "both") && resolved.length === 0) {
+        return errorResult(
+          `target=${target} requires at least one coupon entry. Use target=wolt for a Wolt-only drain.`,
+        );
+      }
+      const prefs: DrainPrefs = { target, coupons: resolved };
+      await saveDrainPrefs(prefs);
+      return textResult({ ...prefs, summary: describePrefs(prefs) });
+    },
+  );
+
+  server.registerTool(
+    "search_restaurants",
+    {
+      description:
+        "Fuzzy search the Cibus restaurants DB by name/address (Hebrew or Latin). Returns top matches with id (use with drain_prefs_set), name, address, rating, ratingCount.",
+      inputSchema: {
+        query: z.string().describe("Free-text query — name or address fragment"),
+        limit: z.number().int().positive().max(20).optional().describe("Max matches to return (default 8)"),
+      },
+    },
+    async ({ query, limit }) => {
+      const db = await loadRestaurantsDb();
+      const matches = fuzzySearch(query, db, limit ?? 8);
+      return textResult({
+        count: matches.length,
+        matches: matches.map((m) => ({
+          score: Number(m.score.toFixed(2)),
+          id: m.record.id,
+          name: m.record.name,
+          address: m.record.address,
+          rating: m.record.rating,
+          ratingCount: m.record.ratingCount,
+          closed: m.record.closed,
+          url: m.record.url,
+        })),
+      });
     },
   );
 
