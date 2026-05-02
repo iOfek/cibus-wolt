@@ -32,11 +32,12 @@ The wizard runs once and asks, in order:
 1. **Cibus + Wolt credentials** — username, password, company.
 2. **OTP delivery** — how the 6-digit Cibus SMS code reaches the tool. Pick one (see next section).
 3. **Wolt login** — opens Chrome once, you sign in manually. Done forever; the cookie auto-refreshes on every drain.
-4. **Schedules** — optional. Add a recurring drain (e.g. every Friday morning).
-5. **Smoke test** — runs `status` and an optional dry-run drain.
-6. **Claude integration** — optional. Adds the tool to Claude Code, Claude Desktop, and/or Claude.ai mobile so you can drive drains from a chat.
+4. **Drain target** — vouchers at specific restaurants, a Wolt gift card, or both. You can also set a fixed weekly **donation** to קליר גיבינג (a non-profit registered with Cibus); the donation comes off the top of every drain and the rest goes to your chosen target.
+5. **Schedules** — optional. Add a recurring drain (e.g. every Friday morning).
+6. **Smoke test** — runs `status` and an optional dry-run drain.
+7. **Claude integration** — optional. Adds the tool to Claude Code, Claude Desktop, and/or Claude.ai mobile so you can drive drains from a chat.
 
-You can skip any of 4–6. Re-run `setup` anytime — it remembers your previous answers.
+You can skip any of 5–7. Re-run `setup` anytime — it remembers your previous answers.
 
 ## OTP delivery — pick one
 

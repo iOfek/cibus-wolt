@@ -9,8 +9,19 @@
     "sortBy": "recommended"
   },
   "fetchedAt": "2026-04-30",
-  "count": 485,
+  "count": 486,
   "restaurants": [
+    {
+      "id": "147828",
+      "name": "תרומות - קליר גיבינג",
+      "href": "/restaurants/pickup/restaurant/147828",
+      "url": "https://consumers.pluxee.co.il/restaurants/pickup/restaurant/147828",
+      "tag": "תרומות",
+      "rating": null,
+      "ratingCount": 0,
+      "address": "תרומה לעמותה (Clear Giving)",
+      "closed": false
+    },
     {
       "id": "152951",
       "name": "שופרסל שלי מורטון מנדל 2 - ראש העין",

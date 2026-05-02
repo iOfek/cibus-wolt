@@ -2,7 +2,13 @@ import { appendRun } from "../audit.ts";
 import { acquireBrowser } from "../browser.ts";
 import { getCibusWeeklyBalance, withCibusSession } from "../cibus.ts";
 import { config } from "../config.ts";
-import { loadDrainPrefs, type DrainPrefs } from "../drainPrefs.ts";
+import {
+  loadDrainPrefs,
+  type DrainPrefs,
+  DONATION_ORG_ID,
+  DONATION_ORG_NAME,
+  DONATION_ORG_ADDRESS,
+} from "../drainPrefs.ts";
 import { tryLoadGmailCreds, type GmailCreds } from "../gmail.ts";
 import { resolveOtp } from "../inputs.ts";
 import { logger } from "../logger.ts";
@@ -57,9 +63,34 @@ export async function runDrainCommand(opts: DrainOpts = {}): Promise<void> {
     }
   }
   await ensureStateDir();
-  const prefs = await loadDrainPrefs();
+  const rawPrefs = await loadDrainPrefs();
+  // Donation always runs first as a Cibus pickup. Materialize it as the leading
+  // coupon pick and, if target was "wolt", bump to "both" so the leftover-to-Wolt
+  // path fires for the rest of the balance.
+  const prefs: DrainPrefs = rawPrefs.donation
+    ? {
+        target: rawPrefs.target === "wolt" ? "both" : rawPrefs.target,
+        coupons: [
+          {
+            restaurantId: DONATION_ORG_ID,
+            restaurantName: DONATION_ORG_NAME,
+            restaurantAddress: DONATION_ORG_ADDRESS,
+            amount: rawPrefs.donation.amount,
+          },
+          ...rawPrefs.coupons,
+        ],
+      }
+    : rawPrefs;
   logger.info(
-    { dryRun, requestedAmount, target: prefs.target, picks: prefs.coupons.length, minAmount: config.minAmount, maxSpend: config.maxSpend },
+    {
+      dryRun,
+      requestedAmount,
+      target: prefs.target,
+      picks: prefs.coupons.length,
+      donation: rawPrefs.donation?.amount,
+      minAmount: config.minAmount,
+      maxSpend: config.maxSpend,
+    },
     "Starting run",
   );
 

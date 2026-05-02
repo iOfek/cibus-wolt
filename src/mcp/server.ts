@@ -224,7 +224,7 @@ export function createMcpServer(): McpServer {
     "drain_prefs_get",
     {
       description:
-        "Get the current drain preferences (target + ordered coupon places). target ∈ {coupons, wolt, both}; coupons is the ordered list of places to spend at, each with optional fixed ₪ amount (undefined = drain remaining at that place).",
+        "Get the current drain preferences (target + ordered coupon places + optional donation). target ∈ {coupons, wolt, both}; coupons is the ordered list of places to spend at, each with optional fixed ₪ amount (undefined = drain remaining at that place); donation (if set) is a fixed ₪ amount donated to קליר גיבינג at the start of every drain.",
       inputSchema: {},
     },
     async () => {
@@ -237,7 +237,7 @@ export function createMcpServer(): McpServer {
     "drain_prefs_set",
     {
       description:
-        "Replace drain preferences. target=wolt clears any coupons. target=coupons|both keeps the ordered list — each entry needs a restaurant_id (use search_restaurants to find one) and an optional ₪ amount (omit for 'drain remaining at this place'). Validates that all IDs exist in the restaurants DB.",
+        "Replace drain preferences. target=wolt clears any coupons. target=coupons|both keeps the ordered list — each entry needs a restaurant_id (use search_restaurants to find one) and an optional ₪ amount (omit for 'drain remaining at this place'). donation (optional) is a fixed ₪/drain donation to קליר גיבינג that runs first. Omit donation to clear it. Validates that all IDs exist in the restaurants DB.",
       inputSchema: {
         target: z.enum(["coupons", "wolt", "both"]),
         coupons: z
@@ -253,9 +253,20 @@ export function createMcpServer(): McpServer {
             }),
           )
           .optional(),
+        donation: z
+          .object({
+            amount: z
+              .number()
+              .int()
+              .positive()
+              .optional()
+              .describe("Fixed ₪ to donate every drain. Omit to donate the entire weekly balance."),
+          })
+          .optional()
+          .describe("Donate to קליר גיבינג at the start of every drain. Omit to clear."),
       },
     },
-    async ({ target, coupons }) => {
+    async ({ target, coupons, donation }) => {
       const requested = coupons ?? [];
       if (target === "wolt" && requested.length > 0) {
         return errorResult("target=wolt does not accept coupons. Use target=coupons or target=both.");
@@ -274,12 +285,18 @@ export function createMcpServer(): McpServer {
           amount: pick.amount,
         });
       }
-      if ((target === "coupons" || target === "both") && resolved.length === 0) {
+      if ((target === "coupons" || target === "both") && resolved.length === 0 && !donation) {
         return errorResult(
-          `target=${target} requires at least one coupon entry. Use target=wolt for a Wolt-only drain.`,
+          `target=${target} requires at least one coupon entry (or a donation). Use target=wolt for a Wolt-only drain.`,
         );
       }
-      const prefs: DrainPrefs = { target, coupons: resolved };
+      const prefs: DrainPrefs = donation
+        ? {
+            target,
+            coupons: resolved,
+            donation: donation.amount === undefined ? {} : { amount: donation.amount },
+          }
+        : { target, coupons: resolved };
       await saveDrainPrefs(prefs);
       return textResult({ ...prefs, summary: describePrefs(prefs) });
     },

@@ -700,35 +700,99 @@ async function runGmailOtpTest(env: EnvMap, creds: { user: string; pass: string 
 }
 
 async function stepDrainTarget(): Promise<DrainTarget> {
-  const { loadDrainPrefs, saveDrainPrefs, describePrefs } = await import("../drainPrefs.ts");
+  const { loadDrainPrefs, saveDrainPrefs, describePrefs, DONATION_ORG_NAME } = await import("../drainPrefs.ts");
   const { fuzzySearch, loadRestaurantsDb } = await import("../pluxeePickup.ts");
-  const { autocompletePrompt } = await import("../autocompletePrompt.ts");
+  const { autocompletePrompt, reverseHebrewRuns } = await import("../autocompletePrompt.ts");
 
   section("Drain target", {
     step: { n: 4, total: TOTAL_STEPS },
-    subtitle: "Where each drain spends the balance: vouchers, a Wolt gift card, or both.",
+    subtitle: "What happens with the weekly balance on every drain.",
   });
 
+  // Hebrew runs get pre-reversed so the terminal's broken bidi renders them in
+  // visually correct order (same trick the autocomplete row formatter uses).
+  const orgName = bold(reverseHebrewRuns(DONATION_ORG_NAME));
+  const showPrefs = (p: import("../drainPrefs.ts").DrainPrefs) => plain(reverseHebrewRuns(describePrefs(p)));
+
   const existing = await loadDrainPrefs();
-  if (existing.target !== "wolt" || existing.coupons.length > 0) {
+  const hasExisting = existing.target !== "wolt" || existing.coupons.length > 0 || !!existing.donation;
+  if (hasExisting) {
     note("Existing prefs:");
-    plain(describePrefs(existing));
+    showPrefs(existing);
     blank();
     const keep = await askYesNo("Keep existing prefs?", true);
     if (keep) return existing.target;
   }
 
-  plain(`- ${bold("coupons")}: buy vouchers at one or more restaurants in order of preference`);
-  plain(`- ${bold("wolt")}:    buy a Wolt gift card (full drain)`);
-  plain(`- ${bold("both")}:    coupons first, leftover → Wolt gift card`);
+  plain(`Pick one:`);
+  plain(`  ${bold("1")}. Donate ₪X → leftover to Wolt gift card — ${orgName}`);
+  plain(`  ${bold("2")}. Donate ₪X (or all) — ${orgName}`);
+  plain(`  ${bold("3")}. Coupons → leftover to Wolt gift card`);
+  plain(`  ${bold("4")}. Coupons (vouchers at restaurants you pick)`);
+  plain(`  ${bold("5")}. Wolt gift card only`);
   blank();
-  const target = (await askChoice("Target", ["coupons", "wolt", "both"], existing.target)) as DrainTarget;
+  const defaultPreset = hasExisting ? presetForExisting(existing) : "1";
+  const preset = await askChoice("Choice", ["1", "2", "3", "4", "5"], defaultPreset);
 
-  if (target === "wolt") {
-    await saveDrainPrefs({ target, coupons: [] });
-    success("Saved: Wolt gift card (full drain).");
-    return target;
+  if (preset === "1") {
+    blank();
+    let donation: import("../drainPrefs.ts").DonationPref;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const raw = await askRaw(`Donation amount in ₪ ${dim("(packages: 50, 100, 180, 250, 500)")}`);
+      const n = Number(raw);
+      if (raw === "" || !Number.isFinite(n) || n <= 0 || !Number.isInteger(n)) {
+        warn(`Amount must be a positive integer ₪ — try again, or pick option 2 to donate everything.`);
+        continue;
+      }
+      donation = { amount: n };
+      break;
+    }
+    const prefs: import("../drainPrefs.ts").DrainPrefs = { target: "wolt", coupons: [], donation };
+    await saveDrainPrefs(prefs);
+    blank();
+    success("Saved drain prefs:");
+    showPrefs(prefs);
+    return prefs.target;
   }
+
+  if (preset === "2") {
+    blank();
+    let donation: import("../drainPrefs.ts").DonationPref;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const raw = await askRaw(`Donation amount in ₪ ${dim("(Enter = entire balance · packages: 50, 100, 180, 250, 500)")}`);
+      if (raw === "") {
+        donation = {};
+        break;
+      }
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n <= 0 || !Number.isInteger(n)) {
+        warn(`Amount must be a positive integer ₪ — try again, or Enter for the entire balance.`);
+        continue;
+      }
+      donation = { amount: n };
+      break;
+    }
+    const prefs: import("../drainPrefs.ts").DrainPrefs = { target: "coupons", coupons: [], donation };
+    await saveDrainPrefs(prefs);
+    blank();
+    success("Saved drain prefs:");
+    showPrefs(prefs);
+    return prefs.target;
+  }
+
+  if (preset === "5") {
+    const prefs: import("../drainPrefs.ts").DrainPrefs = { target: "wolt", coupons: [] };
+    await saveDrainPrefs(prefs);
+    blank();
+    success("Saved drain prefs:");
+    showPrefs(prefs);
+    return prefs.target;
+  }
+
+  // preset 3 (coupons + Wolt remainder) or 4 (coupons only)
+  const target: DrainTarget = preset === "4" ? "coupons" : "both";
 
   blank();
   note("Now pick the restaurants in order of preference. The first place is consumed first.");
@@ -802,17 +866,26 @@ async function stepDrainTarget(): Promise<DrainTarget> {
     success(`Added: ${chosen.name} → ${amount === undefined ? "drain remaining" : `₪${amount}`}`);
   }
 
-  if (picks.length === 0 && (target === "coupons" || target === "both")) {
+  if (picks.length === 0) {
     warn("No restaurants picked. Falling back to Wolt-only target.");
-    await saveDrainPrefs({ target: "wolt", coupons: [] });
+    const fallback: import("../drainPrefs.ts").DrainPrefs = { target: "wolt", coupons: [] };
+    await saveDrainPrefs(fallback);
     return "wolt";
   }
 
-  await saveDrainPrefs({ target, coupons: picks });
+  const prefs: import("../drainPrefs.ts").DrainPrefs = { target, coupons: picks };
+  await saveDrainPrefs(prefs);
   blank();
   success("Saved drain prefs:");
-  plain(describePrefs({ target, coupons: picks }));
+  showPrefs(prefs);
   return target;
+}
+
+function presetForExisting(prefs: import("../drainPrefs.ts").DrainPrefs): "1" | "2" | "3" | "4" | "5" {
+  if (prefs.donation) return prefs.target === "coupons" ? "2" : "1";
+  if (prefs.target === "both") return "3";
+  if (prefs.target === "coupons") return "4";
+  return "5";
 }
 
 async function stepWoltLogin(env: EnvMap): Promise<void> {
