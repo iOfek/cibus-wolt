@@ -1,8 +1,8 @@
 # cibus-wolt
 
-Drain your weekly Cibus balance into a Wolt gift card before it expires.
+Drain your weekly Cibus balance before it expires — into Wolt gift cards, restaurant vouchers, donations to charity, or any combination.
 
-Cibus (Pluxee) gives Israeli tech employees a weekly meal benefit that vanishes if you don't spend it. Wolt accepts Cibus as payment, and Wolt gift cards are valid for 5 years. So this tool turns "didn't eat enough at restaurants this week" into "Wolt credit I can use whenever."
+Cibus (Pluxee) gives Israeli tech employees a weekly meal benefit that vanishes if you don't spend it. Wolt accepts Cibus as payment and Wolt gift cards are valid for 5 years; restaurant vouchers stay redeemable past the weekly reset; and a fixed slice can be sent to קליר גיבינג (a non-profit registered with Cibus) off the top of every drain. So this tool turns "didn't eat enough at restaurants this week" into "Wolt credit, vouchers, or charity — used whenever."
 
 > Personal use, at your own risk. Cibus and Wolt's terms probably don't allow automation.
 
@@ -84,7 +84,7 @@ Both **Gmail** and **Webhook** OTP options need a Shortcut that forwards Cibus S
 **Trigger** (both flavors):
 
 1. iOS Shortcuts app → **Automation** tab → **+** → **Message**
-2. Filter: **Sender** is your Cibus SMS sender (+972 1-700-701-130), **Message** contains `קוד האימות`
+2. Filter: **Sender** is your Cibus SMS sender (+972 1-700-701-130), **Message** contains `קוד האימות`
 3. Turn off "Run After Confirmation" so it fires silently
 
 **Action — Gmail option:**
