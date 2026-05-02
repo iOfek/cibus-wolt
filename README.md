@@ -1,8 +1,8 @@
 # cibus-wolt
 
-Drain your weekly Cibus balance into a Wolt gift card before it expires.
+Drain your weekly Cibus balance into a Wolt gift card, restaurant vouchers, or a charitable donation before it expires.
 
-Cibus (Pluxee) gives Israeli tech employees a weekly meal benefit that vanishes if you don't spend it. Wolt accepts Cibus as payment, and Wolt gift cards are valid for 5 years. So this tool turns "didn't eat enough at restaurants this week" into "Wolt credit I can use whenever."
+Cibus (Pluxee) gives Israeli tech employees a weekly meal benefit that vanishes if you don't spend it. Wolt accepts Cibus as payment, Wolt gift cards are valid for 5 years, and Cibus also lets you buy restaurant vouchers or donate to קליר גיבינג. So this tool turns "didn't eat enough at restaurants this week" into Wolt credit you can use whenever, vouchers for your favorite spots, or a donation off the top — or any mix of the three.
 
 > Personal use, at your own risk. Cibus and Wolt's terms probably don't allow automation.
 
