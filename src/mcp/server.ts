@@ -1,12 +1,12 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import fs from "node:fs/promises";
-import { chromium, type BrowserContext } from "playwright";
 import { config } from "../config.ts";
 import { getCibusWeeklyBalance } from "../cibus.ts";
+import { runDrainInBackground } from "../commands/run.ts";
 import { tryLoadGmailCreds } from "../gmail.ts";
 import { logger } from "../logger.ts";
-import { ensureStateDir, paths, screenshotDirFor } from "../paths.ts";
+import { paths } from "../paths.ts";
 import {
   checkCibusSession,
   checkGmail,
@@ -14,17 +14,8 @@ import {
   getLastRun,
   type PhaseStatus,
 } from "../phases.ts";
-import { buyAndRedeemWoltGiftCard } from "../wolt.ts";
-import { ensureWoltLoggedIn } from "../woltLogin.ts";
-import { appendRun } from "../audit.ts";
-import { resolveMagicLink, resolveOtp, submit as submitInputBus } from "../inputs.ts";
-import {
-  finishRun,
-  getActiveRun,
-  getRunById,
-  setState,
-  startRun,
-} from "./runRegistry.ts";
+import { submit as submitInputBus } from "../inputs.ts";
+import { getActiveRun, getRunById } from "./runRegistry.ts";
 import {
   type Cadence,
   describeSchedule,
@@ -35,8 +26,6 @@ import {
   validateScheduleInput,
 } from "../schedules.ts";
 import { nextFireTime, readMissed } from "../scheduler.ts";
-
-const USER_DATA_DIR = paths.chromeProfile;
 
 function textResult(obj: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(obj, null, 2) }] };
@@ -87,93 +76,8 @@ async function resetScope(scope: "all" | "gmail" | "cibus" | "wolt"): Promise<st
   return deleted;
 }
 
-async function launchDrainContext(): Promise<BrowserContext> {
-  return chromium.launchPersistentContext(USER_DATA_DIR, {
-    headless: false,
-    channel: "chrome",
-    viewport: { width: 1400, height: 900 },
-    locale: "en-US",
-    args: ["--disable-blink-features=AutomationControlled", "--disable-features=IsolateOrigins,site-per-process"],
-    acceptDownloads: false,
-  });
-}
-
-async function runDrainBackground(runId: string, dryRun: boolean, requestedAmount?: number): Promise<void> {
-  try {
-    await ensureStateDir();
-    // Gmail is optional — Claude feeds magic-link + OTP via submit_* tools
-    const gmail = config.gmailEnabled
-      ? tryLoadGmailCreds(config.gmail.user, config.gmail.pass)
-      : null;
-
-    const balance = await getCibusWeeklyBalance(config.cibus, {
-      gmail: gmail ?? undefined,
-      fetchOtp: (since) => resolveOtp(5 * 60_000, { gmail: gmail ?? undefined, allowStdin: false, since }),
-    });
-    const maxSpendable = Math.floor(balance);
-
-    let amount: number;
-    if (requestedAmount !== undefined) {
-      if (requestedAmount > maxSpendable) {
-        await appendRun({ ts: new Date().toISOString(), amount: requestedAmount, status: "failed", reason: "exceeds-balance" });
-        finishRun(runId, "failed", { status: "failed", amount: requestedAmount, error: `Requested ₪${requestedAmount} exceeds available ₪${maxSpendable}` });
-        return;
-      }
-      amount = requestedAmount;
-    } else {
-      amount = maxSpendable;
-    }
-    setState(runId, "running", { amount });
-
-    if (amount < config.minAmount) {
-      await appendRun({ ts: new Date().toISOString(), amount, status: "skipped", reason: "below-min" });
-      finishRun(runId, "completed", { status: "skipped", amount });
-      return;
-    }
-    if (amount > config.maxSpend) {
-      await appendRun({ ts: new Date().toISOString(), amount, status: "failed", reason: "exceeds-max" });
-      finishRun(runId, "failed", { status: "failed", amount, error: `Balance ${amount} exceeds MAX_SPEND ${config.maxSpend}` });
-      return;
-    }
-
-    const context = await launchDrainContext();
-    await context.addInitScript(() => {
-      Object.defineProperty(navigator, "webdriver", { get: () => undefined });
-    });
-    const page = context.pages()[0] ?? (await context.newPage());
-    const screenshotDir = screenshotDirFor(`mcp-${runId.slice(0, 8)}`);
-
-    try {
-      await ensureWoltLoggedIn({ page });
-      const result = await buyAndRedeemWoltGiftCard({
-        page,
-        context,
-        amount,
-        cibus: {
-          username: config.cibus.username,
-          password: config.cibus.password,
-          authMode: config.cibus.authMode,
-        },
-        gmail: gmail ?? undefined,
-        dryRun,
-        screenshotDir,
-        fetchOtp: (since) => resolveOtp(5 * 60_000, { gmail: gmail ?? undefined, allowStdin: false, since }),
-      });
-      await appendRun({ ts: new Date().toISOString(), amount, status: result.status, url: result.url });
-      finishRun(runId, "completed", { status: result.status, amount, url: result.url });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      await appendRun({ ts: new Date().toISOString(), amount, status: "failed", reason: msg });
-      finishRun(runId, "failed", { status: "failed", amount, error: msg });
-    } finally {
-      await context.close();
-    }
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    logger.error({ runId, err: msg }, "Drain background task failed");
-    finishRun(runId, "failed", { status: "failed", error: msg });
-  }
-}
+// Drain orchestration lives in commands/run.ts (`runDrainInBackground`) so the
+// MCP and CLI share a single dispatcher that honours drainPrefs.
 
 export function createMcpServer(): McpServer {
   const server = new McpServer({ name: "cibus-wolt", version: "0.1.0" });
@@ -274,19 +178,25 @@ export function createMcpServer(): McpServer {
       },
     },
     async ({ dry_run, amount }) => {
-      const res = startRun(dry_run ?? false);
-      if ("error" in res) {
+      const existing = getActiveRun();
+      if (
+        existing &&
+        (existing.state === "running" ||
+          existing.state === "waiting_for_magic_link" ||
+          existing.state === "waiting_for_otp")
+      ) {
         return textResult({
           error: "already_running",
-          active: res.existing,
+          active: existing,
           message: "A run is already in progress. Use its run_id with drain_status / submit_* tools.",
         });
       }
-      // Fire-and-forget background task
-      void runDrainBackground(res.id, dry_run ?? false, amount);
+      // Delegate to the run dispatcher so drainPrefs (coupons / wolt / both)
+      // are respected — same path as the CLI `run` command.
+      const { runId } = runDrainInBackground({ dryRun: dry_run ?? false, amount });
       // Give task a brief moment to hit a waiting state
       await new Promise((r) => setTimeout(r, 1500));
-      return textResult(getRunById(res.id) ?? { id: res.id, state: "running" });
+      return textResult(getRunById(runId) ?? { id: runId, state: "running" });
     },
   );
 
